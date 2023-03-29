@@ -1,19 +1,29 @@
 use std::sync::Arc;
+use std::time::Duration;
 use vulkano::device::physical::{PhysicalDevice, PhysicalDeviceError, PhysicalDeviceType};
 use vulkano::device::{
     Device, DeviceCreateInfo, DeviceCreationError, DeviceExtensions, Features, Queue,
     QueueCreateInfo, QueueFlags,
 };
-use vulkano::image::{ImageUsage, SwapchainImage};
+use vulkano::image::{ImageAccess, ImageUsage, SwapchainImage};
 use vulkano::instance::Instance;
 use vulkano::memory::allocator::{
     FreeListAllocator, GenericMemoryAllocator, StandardMemoryAllocator,
 };
-use vulkano::swapchain::{
-    CompositeAlpha, Surface, Swapchain, SwapchainCreateInfo, SwapchainCreationError,
-};
-use vulkano::sync::GpuFuture;
-use vulkano::{Version, VulkanError};
+use vulkano::swapchain::{acquire_next_image, CompositeAlpha, Surface, Swapchain, SwapchainCreateInfo, SwapchainCreationError, SwapchainPresentInfo};
+use vulkano::sync::{FlushError, GpuFuture};
+use vulkano::{impl_vertex, Version, VulkanError};
+use vulkano::buffer::{BufferAllocateInfo, BufferUsage};
+use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage, RenderingAttachmentInfo, RenderingInfo};
+use vulkano::command_buffer::allocator::StandardCommandBufferAllocator;
+use vulkano::image::view::ImageView;
+use vulkano::pipeline::graphics::input_assembly::InputAssemblyState;
+use vulkano::pipeline::graphics::render_pass::PipelineRenderingCreateInfo;
+use vulkano::pipeline::graphics::vertex_input::BuffersDefinition;
+use vulkano::pipeline::graphics::viewport::{Viewport, ViewportState};
+use vulkano::pipeline::GraphicsPipeline;
+use vulkano::render_pass::{LoadOp, StoreOp};
+use crate::engine::system::vulkan;
 
 pub struct VulkanSystem {
     surface: Arc<Surface>,
@@ -23,7 +33,7 @@ pub struct VulkanSystem {
     swapchain_images: Vec<Arc<SwapchainImage>>,
     allocator: GenericMemoryAllocator<Arc<FreeListAllocator>>,
     recreate_swapchain: bool,
-    previous_frame_end: Box<dyn GpuFuture>,
+    previous_frame_end: Option<Box<dyn GpuFuture>>,
 }
 
 impl VulkanSystem {
@@ -59,12 +69,212 @@ impl VulkanSystem {
             queue: queues.next().expect("Promised queue is not present"),
             allocator: StandardMemoryAllocator::new_default(Arc::clone(&device)),
             recreate_swapchain: false,
-            previous_frame_end: vulkano::sync::now(Arc::clone(&device)).boxed(),
+            previous_frame_end: Some(vulkano::sync::now(Arc::clone(&device)).boxed()),
             surface,
             device,
             swapchain,
             swapchain_images,
         })
+    }
+
+    // TODO just for demo
+    pub fn render(&mut self, width: u32, height: u32) {
+        // We now create a buffer that will store the shape of our triangle.
+        // We use #[repr(C)] here to force rustc to not do anything funky with our data, although for this
+        // particular example, it doesn't actually change the in-memory representation.
+        use bytemuck::{Pod, Zeroable};
+        #[repr(C)]
+        #[derive(Clone, Copy, Debug, Default, Zeroable, Pod)]
+        struct Vertex {
+            position: [f32; 2],
+        }
+        impl_vertex!(Vertex, position);
+
+        let vertices = [
+            Vertex {
+                position: [-0.5, -0.25],
+            },
+            Vertex {
+                position: [0.0, 0.5],
+            },
+            Vertex {
+                position: [0.25, -0.1],
+            },
+        ];
+        let vertex_buffer = vulkano::buffer::Buffer::from_iter(
+            &self.allocator,
+            BufferAllocateInfo {
+                buffer_usage: BufferUsage::VERTEX_BUFFER,
+                ..Default::default()
+            },
+            vertices,
+        )
+            .unwrap();
+
+        mod vs {
+            vulkano_shaders::shader! {
+                ty: "vertex",
+                src: "
+				#version 450
+				layout(location = 0) in vec2 position;
+				void main() {
+					gl_Position = vec4(position, 0.0, 1.0);
+				}
+			"
+            }
+        }
+
+        mod fs {
+            vulkano_shaders::shader! {
+                ty: "fragment",
+                src: "
+				#version 450
+				layout(location = 0) out vec4 f_color;
+				void main() {
+					f_color = vec4(1.0, 0.0, 0.0, 1.0);
+				}
+			"
+            }
+        }
+
+        let vs = vs::load(self.device.clone()).unwrap();
+        let fs = fs::load(self.device.clone()).unwrap();
+
+        let pipeline = GraphicsPipeline::start()
+            .render_pass(PipelineRenderingCreateInfo {
+                color_attachment_formats: vec![Some(self.swapchain.image_format())],
+                ..Default::default()
+            })
+            .vertex_input_state(BuffersDefinition::new().vertex::<Vertex>())
+            .input_assembly_state(InputAssemblyState::new())
+            .vertex_shader(vs.entry_point("main").unwrap(), ())
+            .viewport_state(ViewportState::viewport_dynamic_scissor_irrelevant())
+            .fragment_shader(fs.entry_point("main").unwrap(), ())
+            .build(Arc::clone(&self.device))
+            .unwrap();
+
+        let mut viewport = Viewport {
+            origin: [0.0, 0.0],
+            dimensions: [0.0, 0.0],
+            depth_range: 0.0..1.0,
+        };
+
+        let mut attachment_image_views = window_size_dependent_setup(&self.swapchain_images, &mut viewport);
+
+        let command_buffer_allocator =
+            StandardCommandBufferAllocator::new(Arc::clone(&self.device), Default::default());
+
+        self.previous_frame_end.as_mut().unwrap().cleanup_finished();
+
+        if core::mem::take(&mut self.recreate_swapchain) {
+            let (new_swapchain, new_image) = match self.swapchain.recreate(SwapchainCreateInfo {
+                image_extent: dbg!([width, height]),
+                ..self.swapchain.create_info()
+            }) {
+                Ok(ok) => ok,
+                Err(e) => {
+                    eprintln!("{e}");
+                    eprintln!("{e:?}");
+                    panic!()
+                }
+            };
+            self.swapchain = new_swapchain;
+            self.swapchain_images = new_image;
+        }
+
+        let (image_index, suboptimal, acquire_future) =
+            acquire_next_image(Arc::clone(&self.swapchain), Some(Duration::from_secs(1))).unwrap();
+
+        if suboptimal {
+            self.recreate_swapchain = true;
+        }
+
+        let mut builder = AutoCommandBufferBuilder::primary(
+            &command_buffer_allocator,
+            self.queue.queue_family_index(),
+            CommandBufferUsage::OneTimeSubmit,
+        )
+            .unwrap();
+        builder
+            .begin_rendering(RenderingInfo {
+                color_attachments: vec![Some(RenderingAttachmentInfo {
+                    // `Clear` means that we ask the GPU to clear the content of this
+                    // attachment at the start of rendering.
+                    load_op: LoadOp::Clear,
+                    // `Store` means that we ask the GPU to store the rendered output
+                    // in the attachment image. We could also ask it to discard the result.
+                    store_op: StoreOp::Store,
+                    // The value to clear the attachment with. Here we clear it with a
+                    // blue color.
+                    //
+                    // Only attachments that have `LoadOp::Clear` are provided with
+                    // clear values, any others should use `None` as the clear value.
+                    clear_value: Some([0.0, 0.5, 1.0, 1.0].into()),
+                    ..RenderingAttachmentInfo::image_view(
+                        // We specify image view corresponding to the currently acquired
+                        // swapchain image, to use for this attachment.
+                        attachment_image_views[image_index as usize].clone(),
+                    )
+                })],
+                ..Default::default()
+            })
+            .unwrap()
+            .set_viewport(0, [viewport.clone()])
+            .bind_pipeline_graphics(pipeline)
+            .bind_vertex_buffers(0, vertex_buffer.clone())
+            .draw(vertex_buffer.len() as u32, 1, 0, 0)
+            .unwrap()
+            .end_rendering()
+            .unwrap();
+
+        let command_buffer = builder.build().unwrap();
+        eprintln!("5");
+
+        let future = self
+            .previous_frame_end
+            .take()
+            .unwrap()
+            .join(acquire_future)
+            .then_execute(Arc::clone(&self.queue), command_buffer)
+            .unwrap()
+            .then_swapchain_present(
+                Arc::clone(&self.queue),
+                SwapchainPresentInfo::swapchain_image_index(
+                    Arc::clone(&self.swapchain),
+                    image_index,
+                ),
+            )
+            .then_signal_fence_and_flush();
+
+        eprintln!("6");
+
+        match future {
+            Ok(future) => {
+                self.previous_frame_end = Some(future.boxed());
+            }
+            Err(FlushError::OutOfDate) => {
+                self.recreate_swapchain = true;
+                self.previous_frame_end = Some(vulkano::sync::now(Arc::clone(&self.device)).boxed());
+            }
+            Err(e) => {
+                eprintln!("Failed to flush future: {e:?}");
+                self.previous_frame_end = Some(vulkano::sync::now(Arc::clone(&self.device)).boxed());
+            }
+        }
+
+
+        fn window_size_dependent_setup(
+            images: &[Arc<SwapchainImage>],
+            viewport: &mut Viewport,
+        ) -> Vec<Arc<ImageView<SwapchainImage>>> {
+            let dimensions = images[0].dimensions().width_height();
+            viewport.dimensions = dbg!([dimensions[0] as f32, dimensions[1] as f32]);
+
+            images
+                .iter()
+                .map(|image| ImageView::new_default(image.clone()).unwrap())
+                .collect::<Vec<_>>()
+        }
     }
 }
 

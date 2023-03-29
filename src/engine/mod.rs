@@ -4,6 +4,8 @@ use crate::engine::parts::vulkan::VulkanParts;
 use crate::engine::system::vulkan::VulkanSystem;
 use sdl2::video::WindowBuildError;
 use std::sync::Arc;
+use sdl2::event::Event;
+use sdl2::keyboard::Keycode;
 use vulkano::instance::{Instance, InstanceCreationError, InstanceExtensions};
 use vulkano::swapchain::{Surface, SurfaceApi};
 use vulkano::{Handle, LoadingError, VulkanLibrary, VulkanObject};
@@ -77,6 +79,24 @@ impl Engine {
                 [builder.window_width, builder.window_height],
             )?,
         })
+    }
+
+    pub fn run(mut self, mut f: impl FnMut()) -> Self {
+        'running: loop {
+            f();
+            for event in self.sdl.event_pump.poll_iter() {
+                match event {
+                    Event::Quit { .. } | Event::KeyDown { keycode: Some(Keycode::Escape), .. } => {
+                        break 'running;
+                    }
+                    _ => {}
+                }
+            }
+            let (widht, height) = self.sdl.window.drawable_size();
+            self.vulkan_system.render(widht, height);
+            ::std::thread::sleep(::std::time::Duration::new(0, 1_000_000_000u32 / 60));
+        }
+        self
     }
 }
 
