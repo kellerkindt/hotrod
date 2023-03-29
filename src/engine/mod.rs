@@ -1,18 +1,21 @@
 use crate::engine::builder::EngineBuilder;
+use crate::engine::parts::sdl::SdlParts;
+use crate::engine::parts::vulkan::VulkanParts;
+use crate::engine::system::vulkan::VulkanSystem;
 use sdl2::video::WindowBuildError;
 use std::sync::Arc;
 use vulkano::instance::{Instance, InstanceCreationError, InstanceExtensions};
 use vulkano::swapchain::{Surface, SurfaceApi};
 use vulkano::{Handle, LoadingError, VulkanLibrary, VulkanObject};
-use crate::engine::part::sdl::SdlPart;
-use crate::engine::part::vulkan::VulkanPart;
 
 pub mod builder;
-pub mod part;
+pub mod parts;
+pub mod system;
 
 pub struct Engine {
-    sdl: SdlPart,
-    vulkan: VulkanPart,
+    sdl: SdlParts,
+    vulkan: VulkanParts,
+    vulkan_system: VulkanSystem,
 }
 
 impl Engine {
@@ -48,28 +51,31 @@ impl Engine {
             .map_err(Error::SdlCreateVulkanSurfaceError)?;
 
         // SAFETY: that's the way it is
-        let surface = unsafe {
+        let surface = Arc::new(unsafe {
             Surface::from_handle(
                 Arc::clone(&instance),
                 <_ as Handle>::from_raw(surface_handle),
                 SurfaceApi::Xlib,
                 None,
             )
-        };
-
+        });
 
         Ok(Self {
-            sdl: SdlPart {
+            sdl: SdlParts {
                 context,
                 video_subsystem,
                 event_pump,
                 window,
             },
-            vulkan: VulkanPart {
+            vulkan: VulkanParts {
                 instance,
+                surface: Arc::clone(&surface),
                 surface_handle,
-                surface,
             },
+            vulkan_system: VulkanSystem::new(
+                surface,
+                [builder.window_width, builder.window_height],
+            )?,
         })
     }
 }
@@ -95,4 +101,6 @@ pub enum Error {
     VulkanInstanceCreationError(#[from] InstanceCreationError),
     #[error("Failed to load the vulkan library {0}")]
     VulkanLibraryLoadingError(#[from] LoadingError),
+    #[error("Error in vulkan subsystem: {0}")]
+    VulkanSubsystemError(#[from] system::vulkan::Error),
 }
