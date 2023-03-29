@@ -1,29 +1,32 @@
 use std::sync::Arc;
 use std::time::Duration;
+use vulkano::buffer::{BufferAllocateInfo, BufferUsage};
+use vulkano::command_buffer::allocator::StandardCommandBufferAllocator;
+use vulkano::command_buffer::{
+    AutoCommandBufferBuilder, CommandBufferUsage, RenderingAttachmentInfo, RenderingInfo,
+};
 use vulkano::device::physical::{PhysicalDevice, PhysicalDeviceError, PhysicalDeviceType};
 use vulkano::device::{
     Device, DeviceCreateInfo, DeviceCreationError, DeviceExtensions, Features, Queue,
     QueueCreateInfo, QueueFlags,
 };
+use vulkano::image::view::ImageView;
 use vulkano::image::{ImageAccess, ImageUsage, SwapchainImage};
-use vulkano::instance::Instance;
 use vulkano::memory::allocator::{
     FreeListAllocator, GenericMemoryAllocator, StandardMemoryAllocator,
 };
-use vulkano::swapchain::{acquire_next_image, CompositeAlpha, Surface, Swapchain, SwapchainCreateInfo, SwapchainCreationError, SwapchainPresentInfo};
-use vulkano::sync::{FlushError, GpuFuture};
-use vulkano::{impl_vertex, Version, VulkanError};
-use vulkano::buffer::{BufferAllocateInfo, BufferUsage};
-use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage, RenderingAttachmentInfo, RenderingInfo};
-use vulkano::command_buffer::allocator::StandardCommandBufferAllocator;
-use vulkano::image::view::ImageView;
 use vulkano::pipeline::graphics::input_assembly::InputAssemblyState;
 use vulkano::pipeline::graphics::render_pass::PipelineRenderingCreateInfo;
-use vulkano::pipeline::graphics::vertex_input::BuffersDefinition;
+use vulkano::pipeline::graphics::vertex_input::Vertex;
 use vulkano::pipeline::graphics::viewport::{Viewport, ViewportState};
 use vulkano::pipeline::GraphicsPipeline;
 use vulkano::render_pass::{LoadOp, StoreOp};
-use crate::engine::system::vulkan;
+use vulkano::swapchain::{
+    acquire_next_image, Surface, Swapchain, SwapchainCreateInfo, SwapchainCreationError,
+    SwapchainPresentInfo,
+};
+use vulkano::sync::{FlushError, GpuFuture};
+use vulkano::{Version, VulkanError};
 
 pub struct VulkanSystem {
     surface: Arc<Surface>,
@@ -84,11 +87,11 @@ impl VulkanSystem {
         // particular example, it doesn't actually change the in-memory representation.
         use bytemuck::{Pod, Zeroable};
         #[repr(C)]
-        #[derive(Clone, Copy, Debug, Default, Zeroable, Pod)]
+        #[derive(Clone, Copy, Debug, Default, Zeroable, Pod, Vertex)]
         struct Vertex {
+            #[format(R32G32_SFLOAT)]
             position: [f32; 2],
         }
-        impl_vertex!(Vertex, position);
 
         let vertices = [
             Vertex {
@@ -145,7 +148,7 @@ impl VulkanSystem {
                 color_attachment_formats: vec![Some(self.swapchain.image_format())],
                 ..Default::default()
             })
-            .vertex_input_state(BuffersDefinition::new().vertex::<Vertex>())
+            .vertex_input_state(Vertex::per_vertex())
             .input_assembly_state(InputAssemblyState::new())
             .vertex_shader(vs.entry_point("main").unwrap(), ())
             .viewport_state(ViewportState::viewport_dynamic_scissor_irrelevant())
@@ -159,7 +162,8 @@ impl VulkanSystem {
             depth_range: 0.0..1.0,
         };
 
-        let mut attachment_image_views = window_size_dependent_setup(&self.swapchain_images, &mut viewport);
+        let attachment_image_views =
+            window_size_dependent_setup(&self.swapchain_images, &mut viewport);
 
         let command_buffer_allocator =
             StandardCommandBufferAllocator::new(Arc::clone(&self.device), Default::default());
@@ -254,14 +258,15 @@ impl VulkanSystem {
             }
             Err(FlushError::OutOfDate) => {
                 self.recreate_swapchain = true;
-                self.previous_frame_end = Some(vulkano::sync::now(Arc::clone(&self.device)).boxed());
+                self.previous_frame_end =
+                    Some(vulkano::sync::now(Arc::clone(&self.device)).boxed());
             }
             Err(e) => {
                 eprintln!("Failed to flush future: {e:?}");
-                self.previous_frame_end = Some(vulkano::sync::now(Arc::clone(&self.device)).boxed());
+                self.previous_frame_end =
+                    Some(vulkano::sync::now(Arc::clone(&self.device)).boxed());
             }
         }
-
 
         fn window_size_dependent_setup(
             images: &[Arc<SwapchainImage>],
