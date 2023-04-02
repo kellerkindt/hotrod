@@ -1,0 +1,12 @@
+#version 450
+
+layout(location = 0) in vec4 in_color;
+layout(location = 1) in vec2 in_uv;
+
+layout(location = 0) out vec4 out_color;
+
+layout(binding = 0, set = 0) uniform sampler2D font_texture;
+
+void main() {
+    out_color = in_color * texture(font_texture, in_uv);
+}

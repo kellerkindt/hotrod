@@ -28,6 +28,9 @@ use vulkano::swapchain::{
 use vulkano::sync::{FlushError, GpuFuture};
 use vulkano::{Version, VulkanError};
 
+#[cfg(feature = "ui-egui")]
+pub mod egui;
+
 pub struct VulkanSystem {
     surface: Arc<Surface>,
     device: Arc<Device>,

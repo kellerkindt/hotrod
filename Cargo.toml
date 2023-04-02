@@ -18,3 +18,10 @@ bytemuck = "1.13.0"
 thiserror = { version = "1.0.40", features = [] }
 log4rs = "1.2.0"
 log = "0.4.17"
+
+egui = { version = "0.21.0", optional = true }
+egui_extras = { version = "0.21.0", optional = true }
+
+[features]
+default = ["ui-egui"]
+ui-egui = ["egui", "egui_extras"]
