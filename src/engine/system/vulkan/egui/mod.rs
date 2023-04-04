@@ -1,5 +1,5 @@
 use crate::engine::system::vulkan::egui::binding::Sdl2EguiMapping;
-use crate::engine::system::vulkan::egui::painter::PainterCreationError;
+use crate::engine::system::vulkan::egui::painter::{PainterCreationError, UploadError};
 use bytemuck::Pod;
 use bytemuck::Zeroable;
 use egui::{Context, RawInput};
@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::time::UNIX_EPOCH;
 use vulkano::command_buffer::allocator::CommandBufferAllocator;
 use vulkano::command_buffer::AutoCommandBufferBuilder;
-use vulkano::device::Device;
+use vulkano::device::{Device, Queue};
 use vulkano::pipeline::graphics::color_blend::{AttachmentBlend, BlendFactor, ColorBlendState};
 use vulkano::pipeline::graphics::input_assembly::InputAssemblyState;
 use vulkano::pipeline::graphics::rasterization::{CullMode, RasterizationState};
@@ -37,12 +37,13 @@ pub struct EguiSystem {
 impl EguiSystem {
     pub fn new(
         device: Arc<Device>,
+        queue: Arc<Queue>,
         subpass: Subpass,
         width: f32,
         height: f32,
     ) -> Result<Self, PainterCreationError> {
         Ok(Self {
-            painter: EguiOnVulkanoPainter::new(device, subpass)?,
+            painter: EguiOnVulkanoPainter::new(device, queue, subpass)?,
             context: Context::default(),
             binding: Sdl2EguiMapping::default(),
             width,
@@ -68,7 +69,10 @@ impl EguiSystem {
         self.binding.set_sdl2_view_area(area);
     }
 
-    pub fn render<P>(&mut self, builder: &mut AutoCommandBufferBuilder<P>) -> Result<(), ()>
+    pub fn render<P>(
+        &mut self,
+        builder: &mut AutoCommandBufferBuilder<P>,
+    ) -> Result<(), RenderError>
     where
         P: CommandBufferAllocator,
     {
@@ -95,4 +99,10 @@ impl EguiSystem {
 
         Ok(())
     }
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum RenderError {
+    #[error(transparent)]
+    UploadError(#[from] UploadError),
 }

@@ -1,20 +1,24 @@
-use crate::ui::egui::epaint::ImageDelta;
 use bytemuck::{Pod, Zeroable};
 use egui::epaint::ahash::HashMap;
 use egui::{Color32, ImageData, TextureId, TexturesDelta};
 use std::sync::Arc;
-use vulkano::buffer::{Buffer, BufferAllocateInfo, BufferUsage};
+use vulkano::buffer::{Buffer, BufferAllocateInfo, BufferError, BufferUsage};
 use vulkano::command_buffer::allocator::CommandBufferAllocator;
-use vulkano::command_buffer::{AutoCommandBufferBuilder, CopyBufferToImageInfo};
-use vulkano::descriptor_set::{PersistentDescriptorSet, WriteDescriptorSet};
+use vulkano::command_buffer::{AutoCommandBufferBuilder, CopyBufferToImageInfo, CopyError};
+use vulkano::descriptor_set::allocator::StandardDescriptorSetAllocator;
+use vulkano::descriptor_set::{
+    DescriptorSetCreationError, PersistentDescriptorSet, WriteDescriptorSet,
+};
 use vulkano::device::{Device, DeviceOwned, Queue};
 use vulkano::format::Format;
-use vulkano::image::view::ImageView;
+use vulkano::image::view::{ImageView, ImageViewCreationError};
 use vulkano::image::{
     ImageCreateFlags, ImageDimensions, ImageError, ImageLayout, ImageUsage, StorageImage,
 };
 use vulkano::instance::InstanceCreationError;
-use vulkano::memory::allocator::{MemoryAllocator, MemoryUsage};
+use vulkano::memory::allocator::{
+    GenericMemoryAllocator, MemoryAllocator, MemoryUsage, StandardMemoryAllocator,
+};
 use vulkano::pipeline::graphics::color_blend::{AttachmentBlend, BlendFactor, ColorBlendState};
 use vulkano::pipeline::graphics::input_assembly::InputAssemblyState;
 use vulkano::pipeline::graphics::rasterization::{CullMode, RasterizationState};
@@ -29,17 +33,29 @@ use vulkano::sampler::{
 use vulkano::shader::DescriptorBindingRequirementsIncompatible::ImageViewType;
 use vulkano::shader::ShaderModule;
 
+use crate::ui::egui::epaint::ImageDelta;
+
 pub struct EguiOnVulkanoPainter {
+    pub queue: Arc<Queue>,
     pub pipeline: Arc<GraphicsPipeline>,
     pub texture_sampler: Arc<Sampler>,
     pub textures: HashMap<TextureId, Arc<PersistentDescriptorSet>>,
     pub textures_to_free: Vec<TextureId>,
     pub images: HashMap<TextureId, Arc<StorageImage>>,
+    pub desc_allocator: StandardDescriptorSetAllocator,
+    pub memo_allocator: StandardMemoryAllocator,
 }
 
 impl EguiOnVulkanoPainter {
-    pub fn new(device: Arc<Device>, subpass: Subpass) -> Result<Self, PainterCreationError> {
+    pub fn new(
+        device: Arc<Device>,
+        queue: Arc<Queue>,
+        subpass: Subpass,
+    ) -> Result<Self, PainterCreationError> {
         Ok(Self {
+            queue,
+            desc_allocator: StandardDescriptorSetAllocator::new(Arc::clone(&device)),
+            memo_allocator: StandardMemoryAllocator::new_default(Arc::clone(&device)),
             pipeline: Self::create_pipeline(Arc::clone(&device), subpass)?,
             texture_sampler: Self::create_texture_sampler(device)?,
             textures: HashMap::default(),
@@ -124,11 +140,11 @@ impl EguiOnVulkanoPainter {
 
         for (texture_id, delta) in textures_delta.set {
             let image = if delta.is_whole() {
-                let image = self.create_image(builder.device(), queue, &delta.image)?;
+                let image = self.create_image(&*self.queue, &delta.image)?;
                 let layout = &self.pipeline.layout().set_layouts()[0];
 
                 let desc = PersistentDescriptorSet::new(
-                    builder.device(),
+                    &self.desc_allocator,
                     Arc::clone(&layout),
                     [WriteDescriptorSet::image_view_sampler(
                         0,
@@ -141,7 +157,7 @@ impl EguiOnVulkanoPainter {
                 self.images.insert(texture_id, Arc::clone(&image));
                 image
             } else {
-                Arc::clone(&self.images[texture_id])
+                Arc::clone(&self.images[&texture_id])
             };
 
             self.upload_image_or_delta(image, delta, builder)?;
@@ -152,8 +168,7 @@ impl EguiOnVulkanoPainter {
 
     fn create_image(
         &self,
-        allocator: &(impl MemoryAllocator + ?Sized),
-        queue: Arc<Queue>,
+        queue: &Queue,
         image: &ImageData,
     ) -> Result<Arc<StorageImage>, ImageError> {
         let dimensions = ImageDimensions::Dim2d {
@@ -163,7 +178,7 @@ impl EguiOnVulkanoPainter {
         };
 
         StorageImage::with_usage(
-            allocator,
+            &self.memo_allocator,
             dimensions,
             Format::R8G8B8A8_SRGB,
             ImageUsage::TRANSFER_DST | ImageUsage::SAMPLED,
@@ -183,8 +198,8 @@ impl EguiOnVulkanoPainter {
     {
         builder.copy_buffer_to_image({
             let copy_info = CopyBufferToImageInfo::buffer_image(
-                Buffer::from_data(
-                    builder.device(),
+                Buffer::from_iter(
+                    &self.memo_allocator,
                     BufferAllocateInfo {
                         buffer_usage: BufferUsage::TRANSFER_SRC,
                         memory_usage: MemoryUsage::Upload,
@@ -198,7 +213,7 @@ impl EguiOnVulkanoPainter {
                             .collect::<Vec<_>>(),
                         ImageData::Font(font_data) => font_data
                             .srgba_pixels(Some(1.0_f32)) // TODO
-                            .flat_map(Color32::to_array)
+                            .flat_map(|c| c.to_array())
                             .collect::<Vec<_>>(),
                     },
                 )?,
@@ -251,6 +266,14 @@ pub enum PainterCreationError {
 
 #[derive(thiserror::Error, Debug)]
 pub enum UploadError {
-    #[error("Failed to upload to image: {0}")]
+    #[error("Failed to upload the image: {0}")]
     ImageError(#[from] ImageError),
+    #[error("Failed to create the image view: {0}")]
+    ImageViewCreationError(#[from] ImageViewCreationError),
+    #[error("Failed to create the descriptor set: {0}")]
+    DescriptorSetCreationError(#[from] DescriptorSetCreationError),
+    #[error("Failed to create the buffer: {0}")]
+    BufferError(#[from] BufferError),
+    #[error("Failed to copy to the buffer: {0}")]
+    CopyError(#[from] CopyError),
 }
