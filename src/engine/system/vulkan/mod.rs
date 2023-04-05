@@ -260,7 +260,6 @@ impl VulkanSystem {
         builder.end_rendering().unwrap();
 
         let command_buffer = builder.build().unwrap();
-        eprintln!("5");
 
         let future = self
             .previous_frame_end
@@ -277,8 +276,6 @@ impl VulkanSystem {
                 ),
             )
             .then_signal_fence_and_flush();
-
-        eprintln!("6");
 
         match future {
             Ok(future) => {

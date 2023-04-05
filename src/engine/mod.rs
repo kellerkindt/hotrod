@@ -98,6 +98,9 @@ impl Engine {
         'running: loop {
             f();
             for event in self.sdl.event_pump.poll_iter() {
+                #[cfg(feature = "ui-egui")]
+                self.egui_system.on_sdl2_event(&event);
+
                 match event {
                     Event::Quit { .. }
                     | Event::KeyDown {
@@ -109,9 +112,9 @@ impl Engine {
                     _ => {}
                 }
             }
-            let (widht, height) = self.sdl.window.drawable_size();
+            let (width, height) = self.sdl.window.drawable_size();
 
-            self.vulkan_system.render(widht, height, |builder| {
+            self.vulkan_system.render(width, height, |builder| {
                 #[cfg(feature = "ui-egui")]
                 self.egui_system
                     .update(builder, |ctx| {
