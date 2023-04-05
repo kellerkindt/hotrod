@@ -3,7 +3,8 @@ use std::time::Duration;
 use vulkano::buffer::{BufferAllocateInfo, BufferUsage};
 use vulkano::command_buffer::allocator::StandardCommandBufferAllocator;
 use vulkano::command_buffer::{
-    AutoCommandBufferBuilder, CommandBufferUsage, RenderingAttachmentInfo, RenderingInfo,
+    AutoCommandBufferBuilder, CommandBufferUsage, PrimaryAutoCommandBuffer,
+    RenderingAttachmentInfo, RenderingInfo,
 };
 use vulkano::device::physical::{PhysicalDevice, PhysicalDeviceError, PhysicalDeviceType};
 use vulkano::device::{
@@ -20,7 +21,7 @@ use vulkano::pipeline::graphics::render_pass::PipelineRenderingCreateInfo;
 use vulkano::pipeline::graphics::vertex_input::Vertex;
 use vulkano::pipeline::graphics::viewport::{Viewport, ViewportState};
 use vulkano::pipeline::GraphicsPipeline;
-use vulkano::render_pass::{LoadOp, StoreOp};
+use vulkano::render_pass::{LoadOp, RenderPass, RenderPassCreationError, StoreOp, Subpass};
 use vulkano::swapchain::{
     acquire_next_image, Surface, Swapchain, SwapchainCreateInfo, SwapchainCreationError,
     SwapchainPresentInfo,
@@ -40,6 +41,8 @@ pub struct VulkanSystem {
     allocator: GenericMemoryAllocator<Arc<FreeListAllocator>>,
     recreate_swapchain: bool,
     previous_frame_end: Option<Box<dyn GpuFuture>>,
+    render_pass: Arc<RenderPass>,
+    sub_pass_counter: u32,
 }
 
 impl VulkanSystem {
@@ -72,6 +75,37 @@ impl VulkanSystem {
         let (swapchain, swapchain_images) = create_swapchain(&device, &surface, image_extent)?;
 
         Ok(Self {
+            render_pass: vulkano::single_pass_renderpass!(
+                    Arc::clone(&device),
+                     attachments: {
+                // `color` is a custom name we give to the first and only attachment.
+                color: {
+                    // `load: Clear` means that we ask the GPU to clear the content of this attachment
+                    // at the start of the drawing.
+                    load: Clear,
+                    // `store: Store` means that we ask the GPU to store the output of the draw in the
+                    // actual image. We could also ask it to discard the result.
+                    store: Store,
+                    // `format: <ty>` indicates the type of the format of the image. This has to be one
+                    // of the types of the `vulkano::format` module (or alternatively one of your
+                    // structs that implements the `FormatDesc` trait). Here we use the same format as
+                    // the swapchain.
+                    format: swapchain.image_format(),
+                    // `samples: 1` means that we ask the GPU to use one sample to determine the value
+                    // of each pixel in the color attachment. We could use a larger value
+                    // (multisampling) for antialiasing. An example of this can be found in
+                    // msaa-renderpass.rs.
+                    samples: 1,
+                },
+            },
+            pass: {
+                // We use the attachment named `color` as the one and only color attachment.
+                color: [color],
+                // No depth-stencil attachment is indicated with empty brackets.
+                depth_stencil: {},
+            },
+                )?,
+            sub_pass_counter: 0,
             queue: queues.next().expect("Promised queue is not present"),
             allocator: StandardMemoryAllocator::new_default(Arc::clone(&device)),
             recreate_swapchain: false,
@@ -83,8 +117,26 @@ impl VulkanSystem {
         })
     }
 
+    pub fn device(&self) -> &Arc<Device> {
+        &self.device
+    }
+
+    pub fn queue(&self) -> &Arc<Queue> {
+        &self.queue
+    }
+
+    pub fn create_subpass(&mut self) -> Subpass {
+        let subpass = Subpass::from(Arc::clone(&self.render_pass), self.sub_pass_counter);
+        self.sub_pass_counter += 1;
+        subpass.unwrap()
+    }
+
     // TODO just for demo
-    pub fn render(&mut self, width: u32, height: u32) {
+    pub fn render<F1, F2>(&mut self, width: u32, height: u32, before_render: F1)
+    where
+        F1: FnOnce(&mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>) -> F2,
+        F2: FnOnce(&mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>),
+    {
         // We now create a buffer that will store the shape of our triangle.
         // We use #[repr(C)] here to force rustc to not do anything funky with our data, although for this
         // particular example, it doesn't actually change the in-memory representation.
@@ -115,7 +167,7 @@ impl VulkanSystem {
             },
             vertices,
         )
-            .unwrap();
+        .unwrap();
 
         mod vs {
             vulkano_shaders::shader! {
@@ -201,7 +253,9 @@ impl VulkanSystem {
             self.queue.queue_family_index(),
             CommandBufferUsage::OneTimeSubmit,
         )
-            .unwrap();
+        .unwrap();
+
+        let inside_render = before_render(&mut builder);
         builder
             .begin_rendering(RenderingInfo {
                 color_attachments: vec![Some(RenderingAttachmentInfo {
@@ -230,9 +284,11 @@ impl VulkanSystem {
             .bind_pipeline_graphics(pipeline)
             .bind_vertex_buffers(0, vertex_buffer.clone())
             .draw(vertex_buffer.len() as u32, 1, 0, 0)
-            .unwrap()
-            .end_rendering()
             .unwrap();
+
+        inside_render(&mut builder);
+
+        builder.end_rendering().unwrap();
 
         let command_buffer = builder.build().unwrap();
         eprintln!("5");
@@ -408,4 +464,6 @@ pub enum Error {
     FailedToRetrieveSurfaceCapabilities(PhysicalDeviceError),
     #[error("Failed to retrieve surface formats: {0:?}")]
     FailedToRetrieveSurfaceFormats(PhysicalDeviceError),
+    #[error("Failed to create render pass: {0:?}")]
+    RenderPassCreationError(#[from] RenderPassCreationError),
 }

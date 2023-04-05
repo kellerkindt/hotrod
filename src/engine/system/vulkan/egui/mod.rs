@@ -1,27 +1,13 @@
 use crate::engine::system::vulkan::egui::binding::Sdl2EguiMapping;
-use crate::engine::system::vulkan::egui::painter::{PainterCreationError, UploadError};
-use bytemuck::Pod;
-use bytemuck::Zeroable;
-use egui::{Context, RawInput};
+use crate::engine::system::vulkan::egui::painter::{DrawError, PainterCreationError, UploadError};
+use crate::ui::egui::ClippedPrimitive;
+use egui::Context;
 use painter::EguiOnVulkanoPainter;
 use sdl2::event::Event;
 use std::sync::Arc;
-use std::time::UNIX_EPOCH;
-use vulkano::command_buffer::allocator::CommandBufferAllocator;
 use vulkano::command_buffer::AutoCommandBufferBuilder;
 use vulkano::device::{Device, Queue};
-use vulkano::pipeline::graphics::color_blend::{AttachmentBlend, BlendFactor, ColorBlendState};
-use vulkano::pipeline::graphics::input_assembly::InputAssemblyState;
-use vulkano::pipeline::graphics::rasterization::{CullMode, RasterizationState};
-use vulkano::pipeline::graphics::vertex_input::Vertex;
-use vulkano::pipeline::graphics::viewport::ViewportState;
-use vulkano::pipeline::graphics::GraphicsPipelineCreationError;
-use vulkano::pipeline::GraphicsPipeline;
 use vulkano::render_pass::Subpass;
-use vulkano::sampler::{
-    Filter, Sampler, SamplerCreateInfo, SamplerCreationError, SamplerMipmapMode,
-};
-use vulkano::shader::{EntryPoint, ShaderModule};
 
 mod binding;
 mod painter;
@@ -32,6 +18,7 @@ pub struct EguiSystem {
     binding: Sdl2EguiMapping,
     width: f32,
     height: f32,
+    clipped_primitives: Vec<ClippedPrimitive>,
 }
 
 impl EguiSystem {
@@ -48,6 +35,7 @@ impl EguiSystem {
             binding: Sdl2EguiMapping::default(),
             width,
             height,
+            clipped_primitives: Vec::default(),
         })
     }
 
@@ -69,26 +57,18 @@ impl EguiSystem {
         self.binding.set_sdl2_view_area(area);
     }
 
-    pub fn render<P>(
+    pub fn update<P>(
         &mut self,
         builder: &mut AutoCommandBufferBuilder<P>,
-    ) -> Result<(), RenderError>
-    where
-        P: CommandBufferAllocator,
-    {
+        ui: impl FnOnce(&Context),
+    ) -> Result<(), UploadError> {
         let input = self.binding.take_input();
         let output = self.context.run(input, |ctx| {
-            //
+            ui(&ctx);
         });
 
         self.painter
             .update_textures(output.textures_delta, builder)?;
-        self.painter.draw(
-            builder,
-            [self.width, self.height],
-            &self.context,
-            output.shapes,
-        )?;
 
         if let Some(cursor) = self
             .binding
@@ -97,12 +77,17 @@ impl EguiSystem {
             cursor.set();
         }
 
+        self.clipped_primitives = self.context.tessellate(output.shapes);
+
         Ok(())
     }
-}
 
-#[derive(thiserror::Error, Debug)]
-pub enum RenderError {
-    #[error(transparent)]
-    UploadError(#[from] UploadError),
+    #[inline]
+    pub fn render<P>(
+        &mut self,
+        builder: &mut AutoCommandBufferBuilder<P>,
+    ) -> Result<(), DrawError> {
+        self.painter
+            .draw(builder, self.width, self.height, &self.clipped_primitives)
+    }
 }

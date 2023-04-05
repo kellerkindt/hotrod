@@ -1,12 +1,8 @@
-use egui::{
-    Context, CursorIcon, DroppedFile, FullOutput, HoveredFile, Key, Modifiers, PointerButton, Pos2,
-    RawInput, Rect, Vec2,
-};
+use egui::{CursorIcon, DroppedFile, HoveredFile, Key, PointerButton, Pos2, RawInput, Rect, Vec2};
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use sdl2::mouse::Cursor;
 use sdl2::mouse::SystemCursor;
-use sdl2::render::WindowCanvas;
 use std::path::PathBuf;
 use std::time::UNIX_EPOCH;
 

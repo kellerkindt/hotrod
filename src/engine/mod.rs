@@ -2,10 +2,11 @@ use crate::engine::builder::EngineBuilder;
 use crate::engine::parts::sdl::SdlParts;
 use crate::engine::parts::vulkan::VulkanParts;
 use crate::engine::system::vulkan::VulkanSystem;
-use sdl2::video::WindowBuildError;
-use std::sync::Arc;
+use egui::Window;
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
+use sdl2::video::WindowBuildError;
+use std::sync::Arc;
 use vulkano::instance::{Instance, InstanceCreationError, InstanceExtensions};
 use vulkano::swapchain::{Surface, SurfaceApi};
 use vulkano::{Handle, LoadingError, VulkanLibrary, VulkanObject};
@@ -18,6 +19,8 @@ pub struct Engine {
     sdl: SdlParts,
     vulkan: VulkanParts,
     vulkan_system: VulkanSystem,
+    #[cfg(feature = "ui-egui")]
+    egui_system: crate::engine::system::vulkan::egui::EguiSystem,
 }
 
 impl Engine {
@@ -62,6 +65,14 @@ impl Engine {
             )
         });
 
+        let vulkan = VulkanParts {
+            instance,
+            surface: Arc::clone(&surface),
+            surface_handle,
+        };
+        let mut vulkan_system =
+            VulkanSystem::new(surface, [builder.window_width, builder.window_height])?;
+
         Ok(Self {
             sdl: SdlParts {
                 context,
@@ -69,15 +80,17 @@ impl Engine {
                 event_pump,
                 window,
             },
-            vulkan: VulkanParts {
-                instance,
-                surface: Arc::clone(&surface),
-                surface_handle,
-            },
-            vulkan_system: VulkanSystem::new(
-                surface,
-                [builder.window_width, builder.window_height],
-            )?,
+            #[cfg(feature = "ui-egui")]
+            egui_system: crate::engine::system::vulkan::egui::EguiSystem::new(
+                Arc::clone(&vulkan_system.device()),
+                Arc::clone(&vulkan_system.queue()),
+                vulkan_system.create_subpass(),
+                builder.window_width as f32,
+                builder.window_height as f32,
+            )
+            .unwrap(),
+            vulkan,
+            vulkan_system,
         })
     }
 
@@ -86,14 +99,34 @@ impl Engine {
             f();
             for event in self.sdl.event_pump.poll_iter() {
                 match event {
-                    Event::Quit { .. } | Event::KeyDown { keycode: Some(Keycode::Escape), .. } => {
+                    Event::Quit { .. }
+                    | Event::KeyDown {
+                        keycode: Some(Keycode::Escape),
+                        ..
+                    } => {
                         break 'running;
                     }
                     _ => {}
                 }
             }
             let (widht, height) = self.sdl.window.drawable_size();
-            self.vulkan_system.render(widht, height);
+
+            self.vulkan_system.render(widht, height, |builder| {
+                #[cfg(feature = "ui-egui")]
+                self.egui_system
+                    .update(builder, |ctx| {
+                        Window::new("Se Window").show(ctx, |ui| {
+                            if ui.button("Hi").clicked() {
+                                eprintln!("THE BUTTON WAS CLICKED");
+                            }
+                        });
+                    })
+                    .unwrap();
+                |builder| {
+                    #[cfg(feature = "ui-egui")]
+                    self.egui_system.render(builder).unwrap();
+                }
+            });
             ::std::thread::sleep(::std::time::Duration::new(0, 1_000_000_000u32 / 60));
         }
         self

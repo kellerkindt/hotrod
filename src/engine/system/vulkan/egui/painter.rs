@@ -1,39 +1,35 @@
 use bytemuck::{Pod, Zeroable};
 use egui::epaint::ahash::HashMap;
-use egui::{Color32, ImageData, TextureId, TexturesDelta};
+use egui::{ClippedPrimitive, Color32, ImageData, Rect, TextureId, TexturesDelta};
 use std::sync::Arc;
-use vulkano::buffer::{Buffer, BufferAllocateInfo, BufferError, BufferUsage};
-use vulkano::command_buffer::allocator::CommandBufferAllocator;
-use vulkano::command_buffer::{AutoCommandBufferBuilder, CopyBufferToImageInfo, CopyError};
+use vulkano::buffer::{Buffer, BufferAllocateInfo, BufferError, BufferUsage, Subbuffer};
+use vulkano::command_buffer::{
+    AutoCommandBufferBuilder, CopyBufferToImageInfo, CopyError, PipelineExecutionError,
+    RenderPassError, SubpassContents,
+};
 use vulkano::descriptor_set::allocator::StandardDescriptorSetAllocator;
 use vulkano::descriptor_set::{
     DescriptorSetCreationError, PersistentDescriptorSet, WriteDescriptorSet,
 };
-use vulkano::device::{Device, DeviceOwned, Queue};
+use vulkano::device::{Device, Queue};
 use vulkano::format::Format;
 use vulkano::image::view::{ImageView, ImageViewCreationError};
-use vulkano::image::{
-    ImageCreateFlags, ImageDimensions, ImageError, ImageLayout, ImageUsage, StorageImage,
-};
-use vulkano::instance::InstanceCreationError;
-use vulkano::memory::allocator::{
-    GenericMemoryAllocator, MemoryAllocator, MemoryUsage, StandardMemoryAllocator,
-};
+use vulkano::image::{ImageCreateFlags, ImageDimensions, ImageError, ImageUsage, StorageImage};
+use vulkano::memory::allocator::{MemoryUsage, StandardMemoryAllocator};
 use vulkano::pipeline::graphics::color_blend::{AttachmentBlend, BlendFactor, ColorBlendState};
 use vulkano::pipeline::graphics::input_assembly::InputAssemblyState;
 use vulkano::pipeline::graphics::rasterization::{CullMode, RasterizationState};
 use vulkano::pipeline::graphics::vertex_input::Vertex;
-use vulkano::pipeline::graphics::viewport::ViewportState;
+use vulkano::pipeline::graphics::viewport::{Scissor, ViewportState};
 use vulkano::pipeline::graphics::GraphicsPipelineCreationError;
-use vulkano::pipeline::{GraphicsPipeline, Pipeline};
+use vulkano::pipeline::{GraphicsPipeline, Pipeline, PipelineBindPoint};
 use vulkano::render_pass::Subpass;
 use vulkano::sampler::{
     Filter, Sampler, SamplerCreateInfo, SamplerCreationError, SamplerMipmapMode,
 };
-use vulkano::shader::DescriptorBindingRequirementsIncompatible::ImageViewType;
 use vulkano::shader::ShaderModule;
 
-use crate::ui::egui::epaint::ImageDelta;
+use crate::ui::egui::epaint::{ImageDelta, Primitive};
 
 pub struct EguiOnVulkanoPainter {
     pub queue: Arc<Queue>,
@@ -70,13 +66,13 @@ impl EguiOnVulkanoPainter {
     ) -> Result<Arc<GraphicsPipeline>, GraphicsPipelineCreationError> {
         GraphicsPipeline::start()
             .vertex_input_state(AdapterVertex::per_vertex())
+            .input_assembly_state(InputAssemblyState::new())
             .vertex_shader(
                 Self::load_vertex_shader(Arc::clone(&device))
                     .entry_point("main")
                     .unwrap(),
                 (),
             )
-            .input_assembly_state(InputAssemblyState::new())
             .viewport_state(ViewportState::viewport_dynamic_scissor_dynamic(1))
             .fragment_shader(
                 Self::load_fragment_shader(Arc::clone(&device))
@@ -128,14 +124,121 @@ impl EguiOnVulkanoPainter {
         shader::load(device).unwrap()
     }
 
+    pub fn draw<P>(
+        &mut self,
+
+        builder: &mut AutoCommandBufferBuilder<P>,
+        width: f32,
+        height: f32,
+        clipped_primitives: &[ClippedPrimitive],
+    ) -> Result<(), DrawError> {
+        builder
+            .next_subpass(SubpassContents::Inline)?
+            .bind_pipeline_graphics(Arc::clone(&self.pipeline));
+
+        let mut vertices = Vec::<AdapterVertex>::with_capacity(clipped_primitives.len() * 4);
+        let mut indices = Vec::<u32>::with_capacity(clipped_primitives.len() * 6);
+        let mut clip_rects = Vec::<Rect>::with_capacity(clipped_primitives.len());
+        let mut texture_ids = Vec::<TextureId>::with_capacity(clipped_primitives.len());
+        let mut offsets = Vec::<(usize, usize)>::with_capacity(clipped_primitives.len());
+
+        for clipped in clipped_primitives {
+            let mesh = match &clipped.primitive {
+                Primitive::Mesh(mesh) => mesh,
+                Primitive::Callback(_) => {
+                    dbg!("NOT YET SUPPORTED", &clipped.primitive);
+                    continue;
+                }
+            };
+
+            if mesh.vertices.is_empty() || mesh.indices.is_empty() {
+                continue;
+            }
+
+            offsets.push((vertices.len(), indices.len()));
+            texture_ids.push(mesh.texture_id);
+
+            mesh.vertices.iter().for_each(|v| vertices.push(v.into()));
+            mesh.indices.iter().for_each(|i| indices.push(*i));
+            clip_rects.push(clipped.clip_rect);
+        }
+
+        if clip_rects.is_empty() {
+            // nothing to do
+            return Ok(());
+        }
+
+        offsets.push((vertices.len(), indices.len()));
+
+        let (vertex_buffer, index_buffer) = self.create_buffers(vertices, indices)?;
+        for (index, rect) in clip_rects.into_iter().enumerate() {
+            let offset = offsets[index];
+            let offset_end = offsets[index + 1];
+
+            let vertices = vertex_buffer
+                .clone()
+                .slice(offset.0 as u64..offset_end.0 as u64);
+            let indices = index_buffer
+                .clone()
+                .slice(offset.1 as u64..offset_end.0 as u64);
+
+            if let Some(texture) = self.textures.get(&texture_ids[index]) {
+                let index_count = indices.len() as u32;
+                builder
+                    .set_scissor(
+                        0,
+                        [Scissor {
+                            origin: [rect.min.x as u32, rect.min.y as u32],
+                            dimensions: [rect.width() as u32, rect.height() as u32],
+                        }],
+                    )
+                    .bind_vertex_buffers(0, vertices)
+                    .bind_index_buffer(indices)
+                    .bind_descriptor_sets(
+                        PipelineBindPoint::Graphics,
+                        Arc::clone(&self.pipeline.layout()),
+                        0,
+                        Arc::clone(texture),
+                    )
+                    .push_constants(Arc::clone(&self.pipeline.layout()), 0, [width, height])
+                    .draw_indexed(index_count, 1, 0, 0, 0)?;
+            }
+        }
+
+        // self.free_textures(); TODO
+        Ok(())
+    }
+
+    fn create_buffers(
+        &self,
+        vertices: Vec<AdapterVertex>,
+        indices: Vec<u32>,
+    ) -> Result<(Subbuffer<[AdapterVertex]>, Subbuffer<[u32]>), BufferError> {
+        let vertices = Buffer::from_iter(
+            &self.memo_allocator,
+            BufferAllocateInfo {
+                buffer_usage: BufferUsage::VERTEX_BUFFER,
+                ..BufferAllocateInfo::default()
+            },
+            vertices,
+        )?;
+        let indices = Buffer::from_iter(
+            &self.memo_allocator,
+            BufferAllocateInfo {
+                buffer_usage: BufferUsage::INDEX_BUFFER,
+                ..BufferAllocateInfo::default()
+            },
+            indices,
+        )?;
+
+        Ok((vertices, indices))
+    }
+
     pub fn update_textures<P>(
         &mut self,
         textures_delta: TexturesDelta,
         builder: &mut AutoCommandBufferBuilder<P>,
-    ) -> Result<(), UploadError>
-    where
-        P: CommandBufferAllocator,
-    {
+    ) -> Result<(), UploadError> {
         self.textures_to_free.extend(textures_delta.free);
 
         for (texture_id, delta) in textures_delta.set {
@@ -192,12 +295,9 @@ impl EguiOnVulkanoPainter {
         image: Arc<StorageImage>,
         delta: ImageDelta,
         builder: &mut AutoCommandBufferBuilder<P>,
-    ) -> Result<(), UploadError>
-    where
-        P: CommandBufferAllocator,
-    {
+    ) -> Result<(), UploadError> {
         builder.copy_buffer_to_image({
-            let copy_info = CopyBufferToImageInfo::buffer_image(
+            let mut copy_info = CopyBufferToImageInfo::buffer_image(
                 Buffer::from_iter(
                     &self.memo_allocator,
                     BufferAllocateInfo {
@@ -205,7 +305,7 @@ impl EguiOnVulkanoPainter {
                         memory_usage: MemoryUsage::Upload,
                         ..BufferAllocateInfo::default()
                     },
-                    match delta.image {
+                    match &delta.image {
                         ImageData::Color(color_data) => color_data
                             .pixels
                             .iter()
@@ -276,4 +376,14 @@ pub enum UploadError {
     BufferError(#[from] BufferError),
     #[error("Failed to copy to the buffer: {0}")]
     CopyError(#[from] CopyError),
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum DrawError {
+    #[error("Unable to configure rendering: {0}")]
+    RenderPassError(#[from] RenderPassError),
+    #[error("Unable to upload buffer contents: {0}")]
+    BufferError(#[from] BufferError),
+    #[error("Unable to execute the pipeline: {0}")]
+    PipelineExecutionError(#[from] PipelineExecutionError),
 }
