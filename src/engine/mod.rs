@@ -70,7 +70,7 @@ impl Engine {
             surface: Arc::clone(&surface),
             surface_handle,
         };
-        let mut vulkan_system =
+        let vulkan_system =
             VulkanSystem::new(surface, [builder.window_width, builder.window_height])?;
 
         Ok(Self {
@@ -84,7 +84,7 @@ impl Engine {
             egui_system: crate::engine::system::vulkan::egui::EguiSystem::new(
                 Arc::clone(&vulkan_system.device()),
                 Arc::clone(&vulkan_system.queue()),
-                vulkan_system.create_subpass(),
+                vulkan_system.image_format(),
                 builder.window_width as f32,
                 builder.window_height as f32,
             )

@@ -11,6 +11,7 @@ use vulkano::device::{
     Device, DeviceCreateInfo, DeviceCreationError, DeviceExtensions, Features, Queue,
     QueueCreateInfo, QueueFlags,
 };
+use vulkano::format::Format;
 use vulkano::image::view::ImageView;
 use vulkano::image::{ImageAccess, ImageUsage, SwapchainImage};
 use vulkano::memory::allocator::{
@@ -21,7 +22,7 @@ use vulkano::pipeline::graphics::render_pass::PipelineRenderingCreateInfo;
 use vulkano::pipeline::graphics::vertex_input::Vertex;
 use vulkano::pipeline::graphics::viewport::{Viewport, ViewportState};
 use vulkano::pipeline::GraphicsPipeline;
-use vulkano::render_pass::{LoadOp, RenderPass, RenderPassCreationError, StoreOp, Subpass};
+use vulkano::render_pass::{LoadOp, RenderPassCreationError, StoreOp};
 use vulkano::swapchain::{
     acquire_next_image, Surface, Swapchain, SwapchainCreateInfo, SwapchainCreationError,
     SwapchainPresentInfo,
@@ -41,8 +42,6 @@ pub struct VulkanSystem {
     allocator: GenericMemoryAllocator<Arc<FreeListAllocator>>,
     recreate_swapchain: bool,
     previous_frame_end: Option<Box<dyn GpuFuture>>,
-    render_pass: Arc<RenderPass>,
-    sub_pass_counter: u32,
 }
 
 impl VulkanSystem {
@@ -75,37 +74,6 @@ impl VulkanSystem {
         let (swapchain, swapchain_images) = create_swapchain(&device, &surface, image_extent)?;
 
         Ok(Self {
-            render_pass: vulkano::single_pass_renderpass!(
-                    Arc::clone(&device),
-                     attachments: {
-                // `color` is a custom name we give to the first and only attachment.
-                color: {
-                    // `load: Clear` means that we ask the GPU to clear the content of this attachment
-                    // at the start of the drawing.
-                    load: Clear,
-                    // `store: Store` means that we ask the GPU to store the output of the draw in the
-                    // actual image. We could also ask it to discard the result.
-                    store: Store,
-                    // `format: <ty>` indicates the type of the format of the image. This has to be one
-                    // of the types of the `vulkano::format` module (or alternatively one of your
-                    // structs that implements the `FormatDesc` trait). Here we use the same format as
-                    // the swapchain.
-                    format: swapchain.image_format(),
-                    // `samples: 1` means that we ask the GPU to use one sample to determine the value
-                    // of each pixel in the color attachment. We could use a larger value
-                    // (multisampling) for antialiasing. An example of this can be found in
-                    // msaa-renderpass.rs.
-                    samples: 1,
-                },
-            },
-            pass: {
-                // We use the attachment named `color` as the one and only color attachment.
-                color: [color],
-                // No depth-stencil attachment is indicated with empty brackets.
-                depth_stencil: {},
-            },
-                )?,
-            sub_pass_counter: 0,
             queue: queues.next().expect("Promised queue is not present"),
             allocator: StandardMemoryAllocator::new_default(Arc::clone(&device)),
             recreate_swapchain: false,
@@ -117,18 +85,19 @@ impl VulkanSystem {
         })
     }
 
+    #[inline]
     pub fn device(&self) -> &Arc<Device> {
         &self.device
     }
 
+    #[inline]
     pub fn queue(&self) -> &Arc<Queue> {
         &self.queue
     }
 
-    pub fn create_subpass(&mut self) -> Subpass {
-        let subpass = Subpass::from(Arc::clone(&self.render_pass), self.sub_pass_counter);
-        self.sub_pass_counter += 1;
-        subpass.unwrap()
+    #[inline]
+    pub fn image_format(&self) -> Format {
+        self.swapchain.image_format()
     }
 
     // TODO just for demo

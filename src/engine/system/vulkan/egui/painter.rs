@@ -5,7 +5,7 @@ use std::sync::Arc;
 use vulkano::buffer::{Buffer, BufferAllocateInfo, BufferError, BufferUsage, Subbuffer};
 use vulkano::command_buffer::{
     AutoCommandBufferBuilder, CopyBufferToImageInfo, CopyError, PipelineExecutionError,
-    RenderPassError, SubpassContents,
+    RenderPassError,
 };
 use vulkano::descriptor_set::allocator::StandardDescriptorSetAllocator;
 use vulkano::descriptor_set::{
@@ -19,11 +19,11 @@ use vulkano::memory::allocator::{MemoryUsage, StandardMemoryAllocator};
 use vulkano::pipeline::graphics::color_blend::{AttachmentBlend, BlendFactor, ColorBlendState};
 use vulkano::pipeline::graphics::input_assembly::InputAssemblyState;
 use vulkano::pipeline::graphics::rasterization::{CullMode, RasterizationState};
+use vulkano::pipeline::graphics::render_pass::PipelineRenderingCreateInfo;
 use vulkano::pipeline::graphics::vertex_input::Vertex;
 use vulkano::pipeline::graphics::viewport::{Scissor, ViewportState};
 use vulkano::pipeline::graphics::GraphicsPipelineCreationError;
 use vulkano::pipeline::{GraphicsPipeline, Pipeline, PipelineBindPoint};
-use vulkano::render_pass::Subpass;
 use vulkano::sampler::{
     Filter, Sampler, SamplerCreateInfo, SamplerCreationError, SamplerMipmapMode,
 };
@@ -46,13 +46,13 @@ impl EguiOnVulkanoPainter {
     pub fn new(
         device: Arc<Device>,
         queue: Arc<Queue>,
-        subpass: Subpass,
+        image_format: Format,
     ) -> Result<Self, PainterCreationError> {
         Ok(Self {
             queue,
             desc_allocator: StandardDescriptorSetAllocator::new(Arc::clone(&device)),
             memo_allocator: StandardMemoryAllocator::new_default(Arc::clone(&device)),
-            pipeline: Self::create_pipeline(Arc::clone(&device), subpass)?,
+            pipeline: Self::create_pipeline(Arc::clone(&device), image_format)?,
             texture_sampler: Self::create_texture_sampler(device)?,
             textures: HashMap::default(),
             textures_to_free: Vec::default(),
@@ -62,7 +62,7 @@ impl EguiOnVulkanoPainter {
 
     fn create_pipeline(
         device: Arc<Device>,
-        subpass: Subpass,
+        image_format: Format,
     ) -> Result<Arc<GraphicsPipeline>, GraphicsPipelineCreationError> {
         GraphicsPipeline::start()
             .vertex_input_state(AdapterVertex::per_vertex())
@@ -81,14 +81,15 @@ impl EguiOnVulkanoPainter {
                 (),
             )
             .rasterization_state(RasterizationState::new().cull_mode(CullMode::None))
-            .color_blend_state(
-                ColorBlendState::new(subpass.num_color_attachments()).blend({
-                    let mut blend = AttachmentBlend::alpha();
-                    blend.color_source = BlendFactor::One;
-                    blend
-                }),
-            )
-            .render_pass(subpass)
+            .color_blend_state(ColorBlendState::new(1).blend({
+                let mut blend = AttachmentBlend::alpha();
+                blend.color_source = BlendFactor::One;
+                blend
+            }))
+            .render_pass(PipelineRenderingCreateInfo {
+                color_attachment_formats: vec![Some(image_format)],
+                ..Default::default()
+            })
             .build(device)
     }
 
@@ -133,7 +134,7 @@ impl EguiOnVulkanoPainter {
         clipped_primitives: &[ClippedPrimitive],
     ) -> Result<(), DrawError> {
         builder
-            .next_subpass(SubpassContents::Inline)?
+            //.next_subpass(SubpassContents::Inline)?
             .bind_pipeline_graphics(Arc::clone(&self.pipeline));
 
         let mut vertices = Vec::<AdapterVertex>::with_capacity(clipped_primitives.len() * 4);
@@ -180,7 +181,7 @@ impl EguiOnVulkanoPainter {
                 .slice(offset.0 as u64..offset_end.0 as u64);
             let indices = index_buffer
                 .clone()
-                .slice(offset.1 as u64..offset_end.0 as u64);
+                .slice(offset.1 as u64..offset_end.1 as u64);
 
             if let Some(texture) = self.textures.get(&texture_ids[index]) {
                 let index_count = indices.len() as u32;
@@ -312,7 +313,7 @@ impl EguiOnVulkanoPainter {
                             .flat_map(Color32::to_array)
                             .collect::<Vec<_>>(),
                         ImageData::Font(font_data) => font_data
-                            .srgba_pixels(Some(1.0_f32)) // TODO
+                            .srgba_pixels(None) // TODO
                             .flat_map(|c| c.to_array())
                             .collect::<Vec<_>>(),
                     },

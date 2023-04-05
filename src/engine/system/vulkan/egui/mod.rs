@@ -7,7 +7,7 @@ use sdl2::event::Event;
 use std::sync::Arc;
 use vulkano::command_buffer::AutoCommandBufferBuilder;
 use vulkano::device::{Device, Queue};
-use vulkano::render_pass::Subpass;
+use vulkano::format::Format;
 
 mod binding;
 mod painter;
@@ -25,12 +25,12 @@ impl EguiSystem {
     pub fn new(
         device: Arc<Device>,
         queue: Arc<Queue>,
-        subpass: Subpass,
+        image_format: Format,
         width: f32,
         height: f32,
     ) -> Result<Self, PainterCreationError> {
         Ok(Self {
-            painter: EguiOnVulkanoPainter::new(device, queue, subpass)?,
+            painter: EguiOnVulkanoPainter::new(device, queue, image_format)?,
             context: Context::default(),
             binding: Sdl2EguiMapping::default(),
             width,
