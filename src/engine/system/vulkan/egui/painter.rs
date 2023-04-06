@@ -127,7 +127,6 @@ impl EguiOnVulkanoPainter {
 
     pub fn draw<P>(
         &mut self,
-
         builder: &mut AutoCommandBufferBuilder<P>,
         width: f32,
         height: f32,
@@ -206,8 +205,15 @@ impl EguiOnVulkanoPainter {
             }
         }
 
-        // self.free_textures(); TODO
+        self.free_textures();
         Ok(())
+    }
+
+    fn free_textures(&mut self) {
+        for texture in self.textures_to_free.drain(..) {
+            self.textures.remove(&texture);
+            self.images.remove(&texture);
+        }
     }
 
     fn create_buffers(

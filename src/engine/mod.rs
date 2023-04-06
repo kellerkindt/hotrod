@@ -1,14 +1,17 @@
 use crate::engine::builder::EngineBuilder;
 use crate::engine::parts::sdl::SdlParts;
 use crate::engine::parts::vulkan::VulkanParts;
+use crate::engine::system::vulkan::lines::{Line, Vertex2d, VulkanLineSystem};
 use crate::engine::system::vulkan::VulkanSystem;
-use egui::{Context, Window};
+use egui::Context;
 use sdl2::event::{Event, WindowEvent};
 use sdl2::keyboard::Keycode;
-use sdl2::video::{FullscreenType, WindowBuildError};
+use sdl2::video::WindowBuildError;
+use std::ops::Mul;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Instant, UNIX_EPOCH};
 use vulkano::instance::{Instance, InstanceCreationError, InstanceExtensions};
+use vulkano::pipeline::graphics::GraphicsPipelineCreationError;
 use vulkano::swapchain::{Surface, SurfaceApi};
 use vulkano::{Handle, LoadingError, VulkanLibrary, VulkanObject};
 
@@ -20,6 +23,7 @@ pub struct Engine {
     sdl: SdlParts,
     vulkan: VulkanParts,
     vulkan_system: VulkanSystem,
+    vulkan_lines: VulkanLineSystem,
     #[cfg(feature = "ui-egui")]
     egui_system: system::vulkan::egui::EguiSystem,
     #[cfg(feature = "ui-egui")]
@@ -96,12 +100,13 @@ impl Engine {
             #[cfg(feature = "ui-egui")]
             egui_parts: parts::egui::EguiParts::default(),
             vulkan,
+            vulkan_lines: VulkanLineSystem::try_from(&vulkan_system)?,
             vulkan_system,
         })
     }
 
     #[cfg(feature = "ui-egui")]
-    pub fn with_egui_context_callback(mut self, callback: impl FnMut(&Context) + 'static) -> Self {
+    pub fn with_egui_context_callback(self, callback: impl FnMut(&Context) + 'static) -> Self {
         self.with_egui_context_callback_dyn(Box::new(callback))
     }
 
@@ -170,6 +175,31 @@ impl Engine {
                 |builder| {
                     #[cfg(feature = "ui-egui")]
                     self.egui_system.render(builder).unwrap();
+
+                    let time = UNIX_EPOCH.elapsed().unwrap_or_default().subsec_millis() as f32
+                        * std::f32::consts::PI.mul(2.0);
+                    self.vulkan_lines
+                        .draw(
+                            builder,
+                            width as f32,
+                            height as f32,
+                            &[Line {
+                                vertices: (0..200)
+                                    .map(|x| {
+                                        [
+                                            100.0_f32 + x as f32,
+                                            150.0_f32
+                                                + (x as f32 / 2.0 + (time / 333.0)).sin().mul(20.0),
+                                        ]
+                                    })
+                                    .map(|pos| Vertex2d {
+                                        pos,
+                                        color: [0.5, 0.5, 0.5, 0.5],
+                                    })
+                                    .collect(),
+                            }],
+                        )
+                        .unwrap();
                 }
             });
 
@@ -200,8 +230,10 @@ pub enum Error {
     SdlCreateVulkanSurfaceError(String),
     #[error("Failed to create a Vulkan instance: {0}")]
     VulkanInstanceCreationError(#[from] InstanceCreationError),
-    #[error("Failed to load the vulkan library {0}")]
+    #[error("Failed to load the vulkan library: {0}")]
     VulkanLibraryLoadingError(#[from] LoadingError),
-    #[error("Error in vulkan subsystem: {0}")]
-    VulkanSubsystemError(#[from] system::vulkan::Error),
+    #[error("Error in vulkan system: {0}")]
+    VulkanSystemError(#[from] system::vulkan::Error),
+    #[error("Failed to load at least one subsystem: {0}")]
+    VulkanSubsystemError(#[from] GraphicsPipelineCreationError),
 }
