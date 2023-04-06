@@ -2,7 +2,7 @@ use crate::engine::builder::EngineBuilder;
 use crate::engine::parts::sdl::SdlParts;
 use crate::engine::parts::vulkan::VulkanParts;
 use crate::engine::system::vulkan::VulkanSystem;
-use egui::Window;
+use egui::{Context, Window};
 use sdl2::event::{Event, WindowEvent};
 use sdl2::keyboard::Keycode;
 use sdl2::video::{FullscreenType, WindowBuildError};
@@ -22,6 +22,8 @@ pub struct Engine {
     vulkan_system: VulkanSystem,
     #[cfg(feature = "ui-egui")]
     egui_system: system::vulkan::egui::EguiSystem,
+    #[cfg(feature = "ui-egui")]
+    egui_parts: parts::egui::EguiParts,
 }
 
 impl Engine {
@@ -91,9 +93,25 @@ impl Engine {
                 builder.window_height as f32,
             )
             .unwrap(),
+            #[cfg(feature = "ui-egui")]
+            egui_parts: parts::egui::EguiParts::default(),
             vulkan,
             vulkan_system,
         })
+    }
+
+    #[cfg(feature = "ui-egui")]
+    pub fn with_egui_context_callback(mut self, callback: impl FnMut(&Context) + 'static) -> Self {
+        self.with_egui_context_callback_dyn(Box::new(callback))
+    }
+
+    #[cfg(feature = "ui-egui")]
+    pub fn with_egui_context_callback_dyn(
+        mut self,
+        callback: Box<dyn FnMut(&Context) + 'static>,
+    ) -> Self {
+        self.egui_parts.content_callback = Some(callback.into());
+        self
     }
 
     pub fn run(mut self) -> Self {
@@ -140,13 +158,11 @@ impl Engine {
             let (width, height) = self.sdl.window.vulkan_drawable_size();
 
             #[cfg(feature = "ui-egui")]
-            self.egui_system.update_egui(width, height, |ctx| {
-                Window::new("Se Window").show(ctx, |ui| {
-                    if ui.button("Hi").clicked() {
-                        eprintln!("THE BUTTON WAS CLICKED");
-                    }
+            if let Some(callback) = &mut self.egui_parts.content_callback {
+                self.egui_system.update_egui(width, height, |ctx| {
+                    callback(ctx);
                 });
-            });
+            }
 
             self.vulkan_system.render(width, height, |builder| {
                 #[cfg(feature = "ui-egui")]
