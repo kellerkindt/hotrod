@@ -191,19 +191,23 @@ impl VulkanSystem {
         self.previous_frame_end.as_mut().unwrap().cleanup_finished();
 
         if core::mem::take(&mut self.recreate_swapchain) {
-            let (new_swapchain, new_image) = match self.swapchain.recreate(SwapchainCreateInfo {
+            match self.swapchain.recreate(SwapchainCreateInfo {
                 image_extent: [width, height],
                 ..self.swapchain.create_info()
             }) {
-                Ok(ok) => ok,
+                Ok((new_swapchain, new_image)) => {
+                    self.swapchain = new_swapchain;
+                    self.swapchain_images = new_image;
+                }
                 Err(e) => {
                     eprintln!("{e}");
                     eprintln!("{e:?}");
-                    panic!()
+                    // try again
+                    self.recreate_swapchain = true;
+                    return;
+                    // panic!()
                 }
-            };
-            self.swapchain = new_swapchain;
-            self.swapchain_images = new_image;
+            }
         }
 
         let (image_index, suboptimal, acquire_future) =

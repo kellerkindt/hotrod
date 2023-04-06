@@ -5,7 +5,7 @@ use crate::engine::system::vulkan::VulkanSystem;
 use egui::Window;
 use sdl2::event::{Event, WindowEvent};
 use sdl2::keyboard::Keycode;
-use sdl2::video::WindowBuildError;
+use sdl2::video::{FullscreenType, WindowBuildError};
 use std::sync::Arc;
 use std::time::Instant;
 use vulkano::instance::{Instance, InstanceCreationError, InstanceExtensions};
@@ -97,7 +97,9 @@ impl Engine {
     }
 
     pub fn run(mut self) -> Self {
+        let mut maximized = false;
         'running: loop {
+            let mut allow_maximize_change = true;
             let time_start = Instant::now();
             for event in self.sdl.event_pump.poll_iter() {
                 #[cfg(feature = "ui-egui")]
@@ -112,10 +114,24 @@ impl Engine {
                         break 'running;
                     }
                     Event::Window {
-                        win_event: WindowEvent::Resized(..),
+                        win_event: WindowEvent::Resized(..) | WindowEvent::SizeChanged(..),
                         ..
                     } => {
                         self.vulkan_system.recreatee_swapchain();
+                    }
+                    Event::KeyUp {
+                        keycode: Some(Keycode::F11),
+                        repeat: false,
+                        ..
+                    } if allow_maximize_change => {
+                        maximized = !maximized;
+                        if maximized {
+                            self.sdl.window.restore();
+                        } else {
+                            self.sdl.window.maximize();
+                        }
+                        self.sdl.window.set_bordered(maximized);
+                        allow_maximize_change = false;
                     }
                     _ => {}
                 }
