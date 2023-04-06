@@ -7,6 +7,7 @@ use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use sdl2::video::WindowBuildError;
 use std::sync::Arc;
+use std::time::Instant;
 use vulkano::instance::{Instance, InstanceCreationError, InstanceExtensions};
 use vulkano::swapchain::{Surface, SurfaceApi};
 use vulkano::{Handle, LoadingError, VulkanLibrary, VulkanObject};
@@ -20,7 +21,7 @@ pub struct Engine {
     vulkan: VulkanParts,
     vulkan_system: VulkanSystem,
     #[cfg(feature = "ui-egui")]
-    egui_system: crate::engine::system::vulkan::egui::EguiSystem,
+    egui_system: system::vulkan::egui::EguiSystem,
 }
 
 impl Engine {
@@ -94,9 +95,9 @@ impl Engine {
         })
     }
 
-    pub fn run(mut self, mut f: impl FnMut()) -> Self {
+    pub fn run(mut self) -> Self {
         'running: loop {
-            f();
+            let time_start = Instant::now();
             for event in self.sdl.event_pump.poll_iter() {
                 #[cfg(feature = "ui-egui")]
                 self.egui_system.on_sdl2_event(&event);
@@ -114,22 +115,26 @@ impl Engine {
             }
             let (width, height) = self.sdl.window.drawable_size();
 
+            #[cfg(feature = "ui-egui")]
+            self.egui_system.update_egui(|ctx| {
+                Window::new("Se Window").show(ctx, |ui| {
+                    if ui.button("Hi").clicked() {
+                        eprintln!("THE BUTTON WAS CLICKED");
+                    }
+                });
+            });
+
             self.vulkan_system.render(width, height, |builder| {
                 #[cfg(feature = "ui-egui")]
-                self.egui_system
-                    .update(builder, |ctx| {
-                        Window::new("Se Window").show(ctx, |ui| {
-                            if ui.button("Hi").clicked() {
-                                eprintln!("THE BUTTON WAS CLICKED");
-                            }
-                        });
-                    })
-                    .unwrap();
+                self.egui_system.prepare_render(builder).unwrap();
                 |builder| {
                     #[cfg(feature = "ui-egui")]
                     self.egui_system.render(builder).unwrap();
                 }
             });
+
+            let duration_to_end = time_start.elapsed();
+            dbg!(duration_to_end);
             ::std::thread::sleep(::std::time::Duration::new(0, 1_000_000_000u32 / 60));
         }
         self

@@ -1,7 +1,7 @@
 use crate::engine::system::vulkan::egui::binding::Sdl2EguiMapping;
 use crate::engine::system::vulkan::egui::painter::{DrawError, PainterCreationError, UploadError};
 use crate::ui::egui::ClippedPrimitive;
-use egui::Context;
+use egui::{Context, TexturesDelta};
 use painter::EguiOnVulkanoPainter;
 use sdl2::event::Event;
 use std::sync::Arc;
@@ -18,6 +18,9 @@ pub struct EguiSystem {
     binding: Sdl2EguiMapping,
     width: f32,
     height: f32,
+    /// [`TexturesDelta`] to upload next
+    texture_delta: TexturesDelta,
+    /// [`ClippedPrimitive`] to render next
     clipped_primitives: Vec<ClippedPrimitive>,
 }
 
@@ -35,6 +38,7 @@ impl EguiSystem {
             binding: Sdl2EguiMapping::default(),
             width,
             height,
+            texture_delta: TexturesDelta::default(),
             clipped_primitives: Vec::default(),
         })
     }
@@ -57,18 +61,13 @@ impl EguiSystem {
         self.binding.set_sdl2_view_area(area);
     }
 
-    pub fn update<P>(
-        &mut self,
-        builder: &mut AutoCommandBufferBuilder<P>,
-        ui: impl FnOnce(&Context),
-    ) -> Result<(), UploadError> {
+    /// Updates the [`Context`]. This updates the state for calls to [`Self::prepare_render`] and
+    /// [`Self::render`].
+    pub fn update_egui(&mut self, ui: impl FnOnce(&Context)) {
         let input = self.binding.take_input();
         let output = self.context.run(input, |ctx| {
             ui(&ctx);
         });
-
-        self.painter
-            .update_textures(output.textures_delta, builder)?;
 
         if let Some(cursor) = self
             .binding
@@ -77,9 +76,16 @@ impl EguiSystem {
             cursor.set();
         }
 
+        self.texture_delta = output.textures_delta;
         self.clipped_primitives = self.context.tessellate(output.shapes);
+    }
 
-        Ok(())
+    #[inline]
+    pub fn prepare_render<P>(
+        &mut self,
+        builder: &mut AutoCommandBufferBuilder<P>,
+    ) -> Result<(), UploadError> {
+        self.painter.update_textures(&self.texture_delta, builder)
     }
 
     #[inline]

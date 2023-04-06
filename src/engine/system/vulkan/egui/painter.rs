@@ -237,12 +237,13 @@ impl EguiOnVulkanoPainter {
 
     pub fn update_textures<P>(
         &mut self,
-        textures_delta: TexturesDelta,
+        textures_delta: &TexturesDelta,
         builder: &mut AutoCommandBufferBuilder<P>,
     ) -> Result<(), UploadError> {
-        self.textures_to_free.extend(textures_delta.free);
+        self.textures_to_free
+            .extend(textures_delta.free.iter().copied());
 
-        for (texture_id, delta) in textures_delta.set {
+        for (texture_id, delta) in &textures_delta.set {
             let image = if delta.is_whole() {
                 let image = self.create_image(&*self.queue, &delta.image)?;
                 let layout = &self.pipeline.layout().set_layouts()[0];
@@ -257,8 +258,8 @@ impl EguiOnVulkanoPainter {
                     )],
                 )?;
 
-                self.textures.insert(texture_id, desc);
-                self.images.insert(texture_id, Arc::clone(&image));
+                self.textures.insert(*texture_id, desc);
+                self.images.insert(*texture_id, Arc::clone(&image));
                 image
             } else {
                 Arc::clone(&self.images[&texture_id])
@@ -294,7 +295,7 @@ impl EguiOnVulkanoPainter {
     fn upload_image_or_delta<P>(
         &mut self,
         image: Arc<StorageImage>,
-        delta: ImageDelta,
+        delta: &ImageDelta,
         builder: &mut AutoCommandBufferBuilder<P>,
     ) -> Result<(), UploadError> {
         builder.copy_buffer_to_image({
