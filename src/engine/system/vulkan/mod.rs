@@ -100,6 +100,11 @@ impl VulkanSystem {
         self.swapchain.image_format()
     }
 
+    #[inline]
+    pub fn recreatee_swapchain(&mut self) {
+        self.recreate_swapchain = true;
+    }
+
     // TODO just for demo
     pub fn render<F1, F2>(&mut self, width: u32, height: u32, before_render: F1)
     where
@@ -180,15 +185,6 @@ impl VulkanSystem {
             .build(Arc::clone(&self.device))
             .unwrap();
 
-        let mut viewport = Viewport {
-            origin: [0.0, 0.0],
-            dimensions: [0.0, 0.0],
-            depth_range: 0.0..1.0,
-        };
-
-        let attachment_image_views =
-            window_size_dependent_setup(&self.swapchain_images, &mut viewport);
-
         let command_buffer_allocator =
             StandardCommandBufferAllocator::new(Arc::clone(&self.device), Default::default());
 
@@ -196,7 +192,7 @@ impl VulkanSystem {
 
         if core::mem::take(&mut self.recreate_swapchain) {
             let (new_swapchain, new_image) = match self.swapchain.recreate(SwapchainCreateInfo {
-                image_extent: dbg!([width, height]),
+                image_extent: [width, height],
                 ..self.swapchain.create_info()
             }) {
                 Ok(ok) => ok,
@@ -224,6 +220,14 @@ impl VulkanSystem {
         )
         .unwrap();
 
+        let mut viewport = Viewport {
+            origin: [0.0, 0.0],
+            dimensions: [0.0, 0.0],
+            depth_range: 0.0..1.0,
+        };
+        let attachment_image_views =
+            window_size_dependent_setup(&self.swapchain_images, &mut viewport);
+
         let inside_render = before_render(&mut builder);
         builder
             .begin_rendering(RenderingInfo {
@@ -249,7 +253,7 @@ impl VulkanSystem {
                 ..Default::default()
             })
             .unwrap()
-            .set_viewport(0, [viewport.clone()])
+            .set_viewport(0, [viewport])
             .bind_pipeline_graphics(pipeline)
             .bind_vertex_buffers(0, vertex_buffer.clone())
             .draw(vertex_buffer.len() as u32, 1, 0, 0)
@@ -298,7 +302,7 @@ impl VulkanSystem {
             viewport: &mut Viewport,
         ) -> Vec<Arc<ImageView<SwapchainImage>>> {
             let dimensions = images[0].dimensions().width_height();
-            viewport.dimensions = dbg!([dimensions[0] as f32, dimensions[1] as f32]);
+            viewport.dimensions = [dimensions[0] as f32, dimensions[1] as f32];
 
             images
                 .iter()

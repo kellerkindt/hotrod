@@ -3,7 +3,7 @@ use crate::engine::parts::sdl::SdlParts;
 use crate::engine::parts::vulkan::VulkanParts;
 use crate::engine::system::vulkan::VulkanSystem;
 use egui::Window;
-use sdl2::event::Event;
+use sdl2::event::{Event, WindowEvent};
 use sdl2::keyboard::Keycode;
 use sdl2::video::WindowBuildError;
 use std::sync::Arc;
@@ -36,6 +36,7 @@ impl Engine {
                 builder.window_width,
                 builder.window_height,
             )
+            .resizable()
             .vulkan()
             .build()
             .map_err(Error::SdlWindowBuildError)?;
@@ -110,13 +111,20 @@ impl Engine {
                     } => {
                         break 'running;
                     }
+                    Event::Window {
+                        win_event: WindowEvent::Resized(..),
+                        ..
+                    } => {
+                        self.vulkan_system.recreatee_swapchain();
+                    }
                     _ => {}
                 }
             }
-            let (width, height) = self.sdl.window.drawable_size();
+
+            let (width, height) = self.sdl.window.vulkan_drawable_size();
 
             #[cfg(feature = "ui-egui")]
-            self.egui_system.update_egui(|ctx| {
+            self.egui_system.update_egui(width, height, |ctx| {
                 Window::new("Se Window").show(ctx, |ui| {
                     if ui.button("Hi").clicked() {
                         eprintln!("THE BUTTON WAS CLICKED");

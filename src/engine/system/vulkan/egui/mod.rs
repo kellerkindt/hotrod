@@ -63,7 +63,9 @@ impl EguiSystem {
 
     /// Updates the [`Context`]. This updates the state for calls to [`Self::prepare_render`] and
     /// [`Self::render`].
-    pub fn update_egui(&mut self, ui: impl FnOnce(&Context)) {
+    pub fn update_egui(&mut self, width: u32, height: u32, ui: impl FnOnce(&Context)) {
+        self.set_sdl2_view_area(sdl2::rect::Rect::new(0, 0, width, height));
+
         let input = self.binding.take_input();
         let output = self.context.run(input, |ctx| {
             ui(&ctx);
