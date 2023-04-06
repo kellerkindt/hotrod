@@ -4,17 +4,19 @@ use std::sync::Arc;
 use vulkano::buffer::{Buffer, BufferAllocateInfo, BufferError, BufferUsage, Subbuffer};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, PipelineExecutionError};
 use vulkano::descriptor_set::allocator::StandardDescriptorSetAllocator;
-use vulkano::device::{Device, Queue};
+use vulkano::device::{Device, Features, Queue};
 use vulkano::format::Format;
 use vulkano::memory::allocator::StandardMemoryAllocator;
-use vulkano::pipeline::graphics::color_blend::{AttachmentBlend, BlendFactor, ColorBlendState};
+use vulkano::pipeline::graphics::color_blend::{
+    AttachmentBlend, BlendFactor, BlendOp, ColorBlendState,
+};
 use vulkano::pipeline::graphics::input_assembly::{InputAssemblyState, PrimitiveTopology};
 use vulkano::pipeline::graphics::rasterization::{CullMode, RasterizationState};
 use vulkano::pipeline::graphics::render_pass::PipelineRenderingCreateInfo;
 use vulkano::pipeline::graphics::vertex_input::Vertex;
 use vulkano::pipeline::graphics::viewport::{Scissor, ViewportState};
 use vulkano::pipeline::graphics::GraphicsPipelineCreationError;
-use vulkano::pipeline::{GraphicsPipeline, Pipeline};
+use vulkano::pipeline::{GraphicsPipeline, Pipeline, StateMode};
 use vulkano::shader::ShaderModule;
 
 pub struct VulkanLineSystem {
@@ -37,6 +39,12 @@ impl TryFrom<&VulkanSystem> for VulkanLineSystem {
 }
 
 impl VulkanLineSystem {
+    pub const REQUIRED_FEATURES: Features = Features {
+        dynamic_rendering: true,
+        wide_lines: true,
+        ..Features::empty()
+    };
+
     pub fn new(
         device: Arc<Device>,
         queue: Arc<Queue>,
@@ -70,9 +78,15 @@ impl VulkanLineSystem {
                     .unwrap(),
                 (),
             )
-            .rasterization_state(RasterizationState::new().cull_mode(CullMode::None))
+            .rasterization_state(RasterizationState {
+                cull_mode: StateMode::Fixed(CullMode::None),
+                line_width: StateMode::Dynamic,
+                ..RasterizationState::new()
+            })
             .color_blend_state(ColorBlendState::new(1).blend(AttachmentBlend {
-                color_source: BlendFactor::One,
+                // color_source: BlendFactor::One,
+                // alpha_op: BlendOp::ReverseSubtract,
+                // colo
                 ..AttachmentBlend::alpha()
             }))
             .render_pass(PipelineRenderingCreateInfo {
@@ -137,9 +151,14 @@ impl VulkanLineSystem {
             offset += line.vertices.len() as u64;
 
             builder
+                .set_line_width(line.width)
                 .set_scissor(0, [scissor])
                 .bind_vertex_buffers(0, vertices)
-                .push_constants(Arc::clone(&self.pipeline.layout()), 0, [width, height])
+                .push_constants(
+                    Arc::clone(&self.pipeline.layout()),
+                    0,
+                    [width, height, line.width],
+                )
                 .draw(line.vertices.len() as u32, 1, 0, 0)?;
         }
 
@@ -172,6 +191,7 @@ pub struct Vertex2d {
 
 pub struct Line {
     pub vertices: Vec<Vertex2d>,
+    pub width: f32,
 }
 
 #[derive(thiserror::Error, Debug)]

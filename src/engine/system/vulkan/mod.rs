@@ -46,7 +46,12 @@ pub struct VulkanSystem {
 }
 
 impl VulkanSystem {
-    pub fn new(surface: Arc<Surface>, image_extent: [u32; 2]) -> Result<Self, Error> {
+    pub fn new(
+        surface: Arc<Surface>,
+        width: u32,
+        height: u32,
+        features: Features,
+    ) -> Result<Self, Error> {
         let mut device_extensions = DeviceExtensions {
             khr_swapchain: true,
             khr_dynamic_rendering: true,
@@ -63,7 +68,7 @@ impl VulkanSystem {
                 enabled_features: Features {
                     dynamic_rendering: true,
                     ..Features::empty()
-                },
+                } | features,
                 queue_create_infos: vec![QueueCreateInfo {
                     queue_family_index,
                     ..Default::default()
@@ -72,7 +77,7 @@ impl VulkanSystem {
             },
         )?;
 
-        let (swapchain, swapchain_images) = create_swapchain(&device, &surface, image_extent)?;
+        let (swapchain, swapchain_images) = create_swapchain(&device, &surface, [width, height])?;
 
         Ok(Self {
             queue: queues.next().expect("Promised queue is not present"),
@@ -249,6 +254,7 @@ impl VulkanSystem {
                     // Only attachments that have `LoadOp::Clear` are provided with
                     // clear values, any others should use `None` as the clear value.
                     clear_value: Some([0.0, 0.5, 1.0, 1.0].into()),
+                    // clear_value: Some([0.0, 0.0, 0.0, 1.0].into()),
                     ..RenderingAttachmentInfo::image_view(
                         // We specify image view corresponding to the currently acquired
                         // swapchain image, to use for this attachment.

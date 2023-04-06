@@ -4,8 +4,10 @@ layout(location = 0) in vec2 pos;
 layout(location = 1) in vec4 color;
 
 layout(location = 0) out vec4 out_color;
+layout(location = 1) out vec2 out_xy;
+layout(location = 2) out float width;
 
-layout(push_constant) uniform PushConstants { vec2 screen_size; } push_constants;
+layout(push_constant) uniform PushConstants { vec2 screen_size; float width; } push_constants;
 
 void main() {
     out_color = color;
@@ -17,4 +19,7 @@ void main() {
     1.0
     );
 
+
+    out_xy = pos;
+    width = push_constants.width;
 }

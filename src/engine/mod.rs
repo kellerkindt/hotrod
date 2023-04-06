@@ -78,8 +78,12 @@ impl Engine {
             surface: Arc::clone(&surface),
             surface_handle,
         };
-        let vulkan_system =
-            VulkanSystem::new(surface, [builder.window_width, builder.window_height])?;
+        let vulkan_system = VulkanSystem::new(
+            surface,
+            builder.window_width,
+            builder.window_height,
+            VulkanLineSystem::REQUIRED_FEATURES,
+        )?;
 
         Ok(Self {
             sdl: SdlParts {
@@ -177,27 +181,50 @@ impl Engine {
                     self.egui_system.render(builder).unwrap();
 
                     let time = UNIX_EPOCH.elapsed().unwrap_or_default().subsec_millis() as f32
-                        * std::f32::consts::PI.mul(2.0);
+                        * std::f32::consts::PI.mul(2.0)
+                        / 10.0;
                     self.vulkan_lines
                         .draw(
                             builder,
                             width as f32,
                             height as f32,
-                            &[Line {
-                                vertices: (0..200)
-                                    .map(|x| {
-                                        [
-                                            100.0_f32 + x as f32,
-                                            150.0_f32
-                                                + (x as f32 / 2.0 + (time / 333.0)).sin().mul(20.0),
-                                        ]
-                                    })
-                                    .map(|pos| Vertex2d {
-                                        pos,
-                                        color: [0.5, 0.5, 0.5, 0.5],
-                                    })
-                                    .collect(),
-                            }],
+                            &[
+                                Line {
+                                    vertices: (0..200)
+                                        .map(|x| {
+                                            [
+                                                100.0_f32 + (x as f32 * 2.5),
+                                                150.0_f32
+                                                    + (x as f32 / 2.0 + (time / 333.0))
+                                                        .sin()
+                                                        .mul(60.0),
+                                            ]
+                                        })
+                                        .map(|pos| Vertex2d {
+                                            pos,
+                                            color: [0.25, 0.75, 0.45, 0.5],
+                                        })
+                                        .collect(),
+                                    width: 1.0, // ((time / 666.0).sin().mul(3.0) + 4.0),
+                                },
+                                Line {
+                                    vertices: vec![
+                                        Vertex2d {
+                                            pos: [400.0, 300.0],
+                                            color: [0.0, 1.0, 1.0, 1.0],
+                                        },
+                                        Vertex2d {
+                                            pos: [400.0, 450.0],
+                                            color: [1.0, 1.0, 0.0, 1.0],
+                                        },
+                                        Vertex2d {
+                                            pos: [550.0, 300.0],
+                                            color: [1.0, 0.0, 1.0, 1.0],
+                                        },
+                                    ],
+                                    width: 117.9,
+                                },
+                            ],
                         )
                         .unwrap();
                 }
