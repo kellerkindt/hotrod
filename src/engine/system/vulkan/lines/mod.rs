@@ -7,9 +7,7 @@ use vulkano::descriptor_set::allocator::StandardDescriptorSetAllocator;
 use vulkano::device::{Device, Features, Queue};
 use vulkano::format::Format;
 use vulkano::memory::allocator::StandardMemoryAllocator;
-use vulkano::pipeline::graphics::color_blend::{
-    AttachmentBlend, BlendFactor, BlendOp, ColorBlendState,
-};
+use vulkano::pipeline::graphics::color_blend::{AttachmentBlend, ColorBlendState};
 use vulkano::pipeline::graphics::input_assembly::{InputAssemblyState, PrimitiveTopology};
 use vulkano::pipeline::graphics::rasterization::{CullMode, RasterizationState};
 use vulkano::pipeline::graphics::render_pass::PipelineRenderingCreateInfo;

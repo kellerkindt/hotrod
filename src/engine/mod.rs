@@ -3,7 +3,6 @@ use crate::engine::parts::sdl::SdlParts;
 use crate::engine::parts::vulkan::VulkanParts;
 use crate::engine::system::vulkan::lines::{Line, Vertex2d, VulkanLineSystem};
 use crate::engine::system::vulkan::VulkanSystem;
-use egui::Context;
 use sdl2::event::{Event, WindowEvent};
 use sdl2::keyboard::Keycode;
 use sdl2::video::WindowBuildError;
@@ -110,14 +109,17 @@ impl Engine {
     }
 
     #[cfg(feature = "ui-egui")]
-    pub fn with_egui_context_callback(self, callback: impl FnMut(&Context) + 'static) -> Self {
+    pub fn with_egui_context_callback(
+        self,
+        callback: impl FnMut(&egui::Context) + 'static,
+    ) -> Self {
         self.with_egui_context_callback_dyn(Box::new(callback))
     }
 
     #[cfg(feature = "ui-egui")]
     pub fn with_egui_context_callback_dyn(
         mut self,
-        callback: Box<dyn FnMut(&Context) + 'static>,
+        callback: Box<dyn FnMut(&egui::Context) + 'static>,
     ) -> Self {
         self.egui_parts.content_callback = Some(callback.into());
         self
