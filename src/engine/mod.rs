@@ -1,7 +1,7 @@
 use crate::engine::builder::EngineBuilder;
 use crate::engine::parts::sdl::SdlParts;
 use crate::engine::parts::vulkan::VulkanParts;
-use crate::engine::system::vulkan::lines::{Line, Vertex2d, VulkanLineSystem};
+use crate::engine::system::vulkan::beautiful_lines::{Line, Vertex2d, VulkanBeautifulLineSystem};
 use crate::engine::system::vulkan::VulkanSystem;
 use sdl2::event::{Event, WindowEvent};
 use sdl2::keyboard::Keycode;
@@ -22,7 +22,7 @@ pub struct Engine {
     sdl: SdlParts,
     vulkan: VulkanParts,
     vulkan_system: VulkanSystem,
-    vulkan_lines: VulkanLineSystem,
+    vulkan_lines: VulkanBeautifulLineSystem,
     #[cfg(feature = "ui-egui")]
     egui_system: system::vulkan::egui::EguiSystem,
     #[cfg(feature = "ui-egui")]
@@ -81,7 +81,7 @@ impl Engine {
             surface,
             builder.window_width,
             builder.window_height,
-            VulkanLineSystem::REQUIRED_FEATURES,
+            VulkanBeautifulLineSystem::REQUIRED_FEATURES,
         )?;
 
         Ok(Self {
@@ -103,7 +103,7 @@ impl Engine {
             #[cfg(feature = "ui-egui")]
             egui_parts: parts::egui::EguiParts::default(),
             vulkan,
-            vulkan_lines: VulkanLineSystem::try_from(&vulkan_system)?,
+            vulkan_lines: VulkanBeautifulLineSystem::try_from(&vulkan_system)?,
             vulkan_system,
         })
     }

@@ -21,7 +21,6 @@ void main() {
         // color.a *= 1 - smoothstep(0, 1- RATIO, (dist - RATIO));
         // color.a *= 1.0 - (dist - RATIO) / (1.0 - RATIO);
         color.a *= 1.0 - dist;
-
     }
 
     // color.a = 1 - (distance(in_xy, gl_FragCoord.xy) / (width / 2.0));

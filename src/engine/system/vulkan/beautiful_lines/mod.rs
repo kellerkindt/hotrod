@@ -17,14 +17,14 @@ use vulkano::pipeline::graphics::GraphicsPipelineCreationError;
 use vulkano::pipeline::{GraphicsPipeline, Pipeline, StateMode};
 use vulkano::shader::ShaderModule;
 
-pub struct VulkanLineSystem {
+pub struct VulkanBeautifulLineSystem {
     queue: Arc<Queue>,
     pipeline: Arc<GraphicsPipeline>,
     desc_allocator: StandardDescriptorSetAllocator,
     memo_allocator: StandardMemoryAllocator,
 }
 
-impl TryFrom<&VulkanSystem> for VulkanLineSystem {
+impl TryFrom<&VulkanSystem> for VulkanBeautifulLineSystem {
     type Error = GraphicsPipelineCreationError;
 
     fn try_from(vs: &VulkanSystem) -> Result<Self, Self::Error> {
@@ -36,7 +36,7 @@ impl TryFrom<&VulkanSystem> for VulkanLineSystem {
     }
 }
 
-impl VulkanLineSystem {
+impl VulkanBeautifulLineSystem {
     pub const REQUIRED_FEATURES: Features = Features {
         dynamic_rendering: true,
         wide_lines: true,
@@ -98,7 +98,7 @@ impl VulkanLineSystem {
         mod shader {
             vulkano_shaders::shader!(
                 ty: "vertex",
-                path: "src/engine/system/vulkan/lines/lines.vert"
+                path: "src/engine/system/vulkan/beautiful_lines/lines.vert"
             );
         }
         shader::load(device).unwrap()
@@ -108,7 +108,7 @@ impl VulkanLineSystem {
         mod shader {
             vulkano_shaders::shader!(
                 ty: "fragment",
-                path: "src/engine/system/vulkan/lines/lines.frag"
+                path: "src/engine/system/vulkan/beautiful_lines/lines.frag"
             );
         }
         shader::load(device).unwrap()
