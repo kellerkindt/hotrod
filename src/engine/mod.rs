@@ -2,6 +2,7 @@ use crate::engine::builder::EngineBuilder;
 use crate::engine::parts::sdl::SdlParts;
 use crate::engine::parts::vulkan::VulkanParts;
 use crate::engine::system::vulkan::beautiful_lines::{Line, Vertex2d, VulkanBeautifulLineSystem};
+use crate::engine::system::vulkan::lines::VulkanLineSystem;
 use crate::engine::system::vulkan::VulkanSystem;
 use sdl2::event::{Event, WindowEvent};
 use sdl2::keyboard::Keycode;
@@ -22,7 +23,8 @@ pub struct Engine {
     sdl: SdlParts,
     vulkan: VulkanParts,
     vulkan_system: VulkanSystem,
-    vulkan_lines: VulkanBeautifulLineSystem,
+    vulkan_lines: VulkanLineSystem,
+    vulkan_beautiful_lines: VulkanBeautifulLineSystem,
     #[cfg(feature = "ui-egui")]
     egui_system: system::vulkan::egui::EguiSystem,
     #[cfg(feature = "ui-egui")]
@@ -103,7 +105,8 @@ impl Engine {
             #[cfg(feature = "ui-egui")]
             egui_parts: parts::egui::EguiParts::default(),
             vulkan,
-            vulkan_lines: VulkanBeautifulLineSystem::try_from(&vulkan_system)?,
+            vulkan_lines: VulkanLineSystem::try_from(&vulkan_system)?,
+            vulkan_beautiful_lines: VulkanBeautifulLineSystem::try_from(&vulkan_system)?,
             vulkan_system,
         })
     }
@@ -185,7 +188,7 @@ impl Engine {
                     let time = UNIX_EPOCH.elapsed().unwrap_or_default().subsec_millis() as f32
                         * std::f32::consts::PI.mul(2.0)
                         / 10.0;
-                    self.vulkan_lines
+                    self.vulkan_beautiful_lines
                         .draw(
                             builder,
                             width as f32,
@@ -227,6 +230,28 @@ impl Engine {
                                     width: 117.9,
                                 },
                             ],
+                        )
+                        .unwrap();
+
+                    self.vulkan_lines
+                        .draw(
+                            builder,
+                            width as f32,
+                            height as f32,
+                            &[system::vulkan::lines::Line {
+                                vertices: (0..200)
+                                    .map(|x| {
+                                        [
+                                            100.0_f32 + (x as f32 * 2.5),
+                                            150.0_f32
+                                                + (x as f32 / 2.0 + (time / 333.0)).sin().mul(60.0),
+                                        ]
+                                    })
+                                    .map(|pos| system::vulkan::lines::Vertex2d { pos })
+                                    .collect(),
+                                // color: [0.25, 0.75, 0.45, 0.5],
+                                color: [(time / 1000.0).fract(), 0.0, 0.0, 1.0],
+                            }],
                         )
                         .unwrap();
                 }

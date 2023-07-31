@@ -33,6 +33,7 @@ use vulkano::{Version, VulkanError};
 pub mod beautiful_lines;
 #[cfg(feature = "ui-egui")]
 pub mod egui;
+pub mod lines;
 
 pub struct VulkanSystem {
     surface: Arc<Surface>,
