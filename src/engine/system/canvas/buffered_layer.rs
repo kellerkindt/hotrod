@@ -66,9 +66,13 @@ impl BufferedCanvasLayer {
     ) {
         for action in self.actions {
             match action {
-                Action::Lines(lines) => line_system
-                    .draw(cmd, self.size[0] as f32, self.size[1] as f32, &lines)
-                    .unwrap(),
+                Action::Lines(lines) => {
+                    if let Err(e) =
+                        line_system.draw(cmd, self.size[0] as f32, self.size[1] as f32, &lines)
+                    {
+                        eprintln!("{e:?}");
+                    }
+                }
             }
         }
     }
