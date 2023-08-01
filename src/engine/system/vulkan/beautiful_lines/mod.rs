@@ -119,7 +119,7 @@ impl VulkanBeautifulLineSystem {
         builder: &mut AutoCommandBufferBuilder<P>,
         width: f32,
         height: f32,
-        lines: &[Line],
+        lines: &[BeautifulLine],
     ) -> Result<(), DrawError> {
         builder.bind_pipeline_graphics(Arc::clone(&self.pipeline));
 
@@ -187,7 +187,7 @@ pub struct Vertex2d {
     pub color: [f32; 4],
 }
 
-pub struct Line {
+pub struct BeautifulLine {
     pub vertices: Vec<Vertex2d>,
     pub width: f32,
 }

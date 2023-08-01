@@ -12,7 +12,7 @@ use vulkano::pipeline::graphics::input_assembly::{InputAssemblyState, PrimitiveT
 use vulkano::pipeline::graphics::rasterization::{CullMode, RasterizationState};
 use vulkano::pipeline::graphics::render_pass::PipelineRenderingCreateInfo;
 use vulkano::pipeline::graphics::vertex_input::Vertex;
-use vulkano::pipeline::graphics::viewport::{Scissor, ViewportState};
+use vulkano::pipeline::graphics::viewport::ViewportState;
 use vulkano::pipeline::graphics::GraphicsPipelineCreationError;
 use vulkano::pipeline::{GraphicsPipeline, Pipeline, StateMode};
 use vulkano::shader::ShaderModule;

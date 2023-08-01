@@ -1,7 +1,10 @@
 use crate::engine::builder::EngineBuilder;
 use crate::engine::parts::sdl::SdlParts;
 use crate::engine::parts::vulkan::VulkanParts;
-use crate::engine::system::vulkan::beautiful_lines::{Line, Vertex2d, VulkanBeautifulLineSystem};
+use crate::engine::system::canvas::buffered_layer::BufferedCanvasLayer;
+use crate::engine::system::vulkan::beautiful_lines::{
+    BeautifulLine, Vertex2d, VulkanBeautifulLineSystem,
+};
 use crate::engine::system::vulkan::lines::VulkanLineSystem;
 use crate::engine::system::vulkan::VulkanSystem;
 use sdl2::event::{Event, WindowEvent};
@@ -18,6 +21,7 @@ use vulkano::{Handle, LoadingError, VulkanLibrary, VulkanObject};
 pub mod builder;
 pub mod parts;
 pub mod system;
+pub mod types;
 
 pub struct Engine {
     sdl: SdlParts,
@@ -194,7 +198,7 @@ impl Engine {
                             width as f32,
                             height as f32,
                             &[
-                                Line {
+                                BeautifulLine {
                                     vertices: (0..200)
                                         .map(|x| {
                                             [
@@ -212,7 +216,7 @@ impl Engine {
                                         .collect(),
                                     width: 1.0, // ((time / 666.0).sin().mul(3.0) + 4.0),
                                 },
-                                Line {
+                                BeautifulLine {
                                     vertices: vec![
                                         Vertex2d {
                                             pos: [400.0, 300.0],
@@ -254,6 +258,14 @@ impl Engine {
                             }],
                         )
                         .unwrap();
+
+                    let mut layer = BufferedCanvasLayer::from([width, height]);
+                    layer.draw_line([10.0, 10.0], [100.0, 100.0]);
+                    layer.set_draw_color([1.0, 0.0, 0.0, 1.0]);
+                    layer.draw_path(&[[10.0, 10.0], [100.0, 10.0], [100.0, 100.0]]);
+                    layer.set_draw_color([0.0, 1.0, 0.0, 1.0]);
+                    layer.draw_path(&[[100.0, 100.0], [10.0, 100.0], [10.0, 10.0]]);
+                    layer.submit_to_render_pass(builder, &mut self.vulkan_lines);
                 }
             });
 
