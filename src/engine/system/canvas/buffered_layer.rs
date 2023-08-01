@@ -1,5 +1,5 @@
 use crate::engine::system::vulkan::lines::{Line, Vertex2d, VulkanLineSystem};
-use crate::engine::types::world2d::Pos;
+use crate::engine::types::world2d::{Dim, Pos};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, PrimaryAutoCommandBuffer};
 
 pub struct BufferedCanvasLayer {
@@ -23,8 +23,22 @@ impl BufferedCanvasLayer {
         self.color = color;
     }
 
+    #[inline]
     pub fn draw_line<P: Into<Pos<f32>> + Copy>(&mut self, from: P, to: P) {
         self.draw_path(&[from, to])
+    }
+
+    #[inline]
+    pub fn draw_rect<P: Into<Pos<f32>>, D: Into<Dim<f32>>>(&mut self, pos: P, dim: D) {
+        let pos = pos.into();
+        let dim = dim.into();
+        self.draw_path(&[
+            pos,
+            pos + Dim::new(dim.x, 0.0),
+            pos + dim,
+            pos + Dim::new(0.0, dim.y),
+            pos,
+        ])
     }
 
     pub fn draw_path<P: Into<Pos<f32>> + Copy>(&mut self, positions: &[P]) {

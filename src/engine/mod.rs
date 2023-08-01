@@ -7,6 +7,7 @@ use crate::engine::system::vulkan::beautiful_lines::{
 };
 use crate::engine::system::vulkan::lines::VulkanLineSystem;
 use crate::engine::system::vulkan::VulkanSystem;
+use crate::engine::types::world2d::{Dim, Pos};
 use sdl2::event::{Event, WindowEvent};
 use sdl2::keyboard::Keycode;
 use sdl2::video::WindowBuildError;
@@ -265,6 +266,8 @@ impl Engine {
                     layer.draw_path(&[[10.0, 10.0], [100.0, 10.0], [100.0, 100.0]]);
                     layer.set_draw_color([0.0, 1.0, 0.0, 1.0]);
                     layer.draw_path(&[[100.0, 100.0], [10.0, 100.0], [10.0, 10.0]]);
+                    layer.set_draw_color([1.0, 0.0, 1.0, 1.0]);
+                    layer.draw_rect(Pos::new(200.0, 200.0), Dim::new(25.0, 25.0));
                     layer.submit_to_render_pass(builder, &mut self.vulkan_lines);
                 }
             });
