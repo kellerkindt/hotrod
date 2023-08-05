@@ -39,7 +39,6 @@ impl TryFrom<&VulkanSystem> for VulkanLineSystem {
 impl VulkanLineSystem {
     pub const REQUIRED_FEATURES: Features = Features {
         dynamic_rendering: true,
-        wide_lines: true,
         ..Features::empty()
     };
 
@@ -146,8 +145,8 @@ impl VulkanLineSystem {
                     [
                         width,
                         height,
-                        1.0, // HUH!?
-                        1.0, // HUH!?
+                        0.0, // padding ... I guess?
+                        0.0, // padding ... I guess?
                         line.color[0],
                         line.color[1],
                         line.color[2],
