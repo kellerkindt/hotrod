@@ -13,10 +13,10 @@ use image::GenericImageView;
 use sdl2::event::{Event, WindowEvent};
 use sdl2::keyboard::Keycode;
 use sdl2::video::WindowBuildError;
-use std::io::{BufReader, Cursor};
-use std::ops::Mul;
+use std::io::Cursor;
+use std::ops::{Div, Mul};
 use std::sync::Arc;
-use std::time::{Duration, Instant, UNIX_EPOCH};
+use std::time::{Instant, UNIX_EPOCH};
 use vulkano::instance::{Instance, InstanceCreationError, InstanceExtensions};
 use vulkano::pipeline::graphics::GraphicsPipelineCreationError;
 use vulkano::sampler::SamplerCreationError;
@@ -211,10 +211,10 @@ impl Engine {
                         self.vulkan_textures
                             .create_texture(
                                 builder,
-                                dbg!(image
+                                image
                                     .pixels()
                                     .flat_map(|(_x, _y, rgba)| rgba.0)
-                                    .collect::<Vec<u8>>()),
+                                    .collect::<Vec<u8>>(),
                                 image.width(),
                                 image.height(),
                             )
@@ -304,7 +304,23 @@ impl Engine {
                     layer.draw_path(&[[100.0, 100.0], [10.0, 100.0], [10.0, 10.0]]);
                     layer.set_draw_color([1.0, 0.0, 1.0, 1.0]);
                     layer.draw_rect(Pos::new(200.0, 200.0), Dim::new(25.0, 25.0));
-                    layer.submit_to_render_pass(builder, &mut self.vulkan_lines);
+
+                    if let Some(texture) = texture {
+                        layer.draw_textured_rect(
+                            Pos::new(100.0, 500.0),
+                            {
+                                let d = 50.0 * (2.0 + time.div(100.0).cos());
+                                Dim::new(d, d)
+                            },
+                            texture,
+                        );
+                    }
+
+                    layer.submit_to_render_pass(
+                        builder,
+                        &mut self.vulkan_lines,
+                        &mut self.vulkan_textures,
+                    );
 
                     if let Some(texture) = texture {
                         self.vulkan_textures

@@ -196,10 +196,11 @@ impl VulkanTextureSystem {
         }
     }
 
-    fn create_vertex_buffer(
-        &self,
-        vertices: Vec<Vertex2dUv>,
-    ) -> Result<Subbuffer<[Vertex2dUv]>, BufferError> {
+    fn create_vertex_buffer<I>(&self, vertices: I) -> Result<Subbuffer<[Vertex2dUv]>, BufferError>
+    where
+        I: IntoIterator<Item = Vertex2dUv>,
+        I::IntoIter: ExactSizeIterator,
+    {
         Buffer::from_iter(
             &self.memo_allocator,
             BufferAllocateInfo {
