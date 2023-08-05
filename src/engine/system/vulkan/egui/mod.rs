@@ -1,5 +1,5 @@
 use crate::engine::system::vulkan::egui::binding::Sdl2EguiMapping;
-use crate::engine::system::vulkan::egui::painter::{DrawError, PainterCreationError, UploadError};
+use crate::engine::system::vulkan::{DrawError, PipelineCreateError, UploadError};
 use crate::ui::egui::ClippedPrimitive;
 use egui::{Context, TexturesDelta};
 use painter::EguiOnVulkanoPainter;
@@ -7,7 +7,8 @@ use sdl2::event::Event;
 use std::sync::Arc;
 use vulkano::command_buffer::AutoCommandBufferBuilder;
 use vulkano::device::{Device, Queue};
-use vulkano::format::Format;
+use vulkano::pipeline::cache::PipelineCache;
+use vulkano::render_pass::RenderPass;
 
 mod binding;
 mod painter;
@@ -28,12 +29,13 @@ impl EguiSystem {
     pub fn new(
         device: Arc<Device>,
         queue: Arc<Queue>,
-        image_format: Format,
+        render_pass: Arc<RenderPass>,
+        cache: Option<Arc<PipelineCache>>,
         width: f32,
         height: f32,
-    ) -> Result<Self, PainterCreationError> {
+    ) -> Result<Self, PipelineCreateError> {
         Ok(Self {
-            painter: EguiOnVulkanoPainter::new(device, queue, image_format)?,
+            painter: EguiOnVulkanoPainter::new(device, queue, render_pass, cache)?,
             context: Context::default(),
             binding: Sdl2EguiMapping::default(),
             width,

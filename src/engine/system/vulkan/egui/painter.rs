@@ -1,33 +1,35 @@
+use crate::engine::system::vulkan::utils::pipeline::subpass_from_renderpass;
+use crate::engine::system::vulkan::{DrawError, PipelineCreateError, ShaderLoadError, UploadError};
+use crate::shader_from_path;
 use bytemuck::{Pod, Zeroable};
 use egui::epaint::ahash::HashMap;
 use egui::{ClippedPrimitive, Color32, ImageData, Rect, TextureId, TexturesDelta};
 use std::sync::Arc;
-use vulkano::buffer::{Buffer, BufferAllocateInfo, BufferError, BufferUsage, Subbuffer};
-use vulkano::command_buffer::{
-    AutoCommandBufferBuilder, CopyBufferToImageInfo, CopyError, PipelineExecutionError,
-    RenderPassError,
-};
+use vulkano::buffer::{Buffer, BufferAllocateError, BufferCreateInfo, BufferUsage, Subbuffer};
+use vulkano::command_buffer::{AutoCommandBufferBuilder, CopyBufferToImageInfo};
 use vulkano::descriptor_set::allocator::StandardDescriptorSetAllocator;
-use vulkano::descriptor_set::{
-    DescriptorSetCreationError, PersistentDescriptorSet, WriteDescriptorSet,
-};
+use vulkano::descriptor_set::{PersistentDescriptorSet, WriteDescriptorSet};
 use vulkano::device::{Device, Queue};
 use vulkano::format::Format;
-use vulkano::image::view::{ImageView, ImageViewCreationError};
-use vulkano::image::{ImageCreateFlags, ImageDimensions, ImageError, ImageUsage, StorageImage};
-use vulkano::memory::allocator::{MemoryUsage, StandardMemoryAllocator};
+use vulkano::image::sampler::{Filter, Sampler, SamplerCreateInfo, SamplerMipmapMode};
+use vulkano::image::view::ImageView;
+use vulkano::image::{Image, ImageAllocateError, ImageCreateInfo, ImageType, ImageUsage};
+use vulkano::memory::allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator};
+use vulkano::pipeline::cache::PipelineCache;
 use vulkano::pipeline::graphics::color_blend::{AttachmentBlend, BlendFactor, ColorBlendState};
-use vulkano::pipeline::graphics::input_assembly::InputAssemblyState;
+use vulkano::pipeline::graphics::input_assembly::{InputAssemblyState, PrimitiveTopology};
+use vulkano::pipeline::graphics::multisample::MultisampleState;
 use vulkano::pipeline::graphics::rasterization::{CullMode, RasterizationState};
-use vulkano::pipeline::graphics::render_pass::PipelineRenderingCreateInfo;
-use vulkano::pipeline::graphics::vertex_input::Vertex;
+use vulkano::pipeline::graphics::vertex_input::{Vertex, VertexDefinition};
 use vulkano::pipeline::graphics::viewport::{Scissor, ViewportState};
-use vulkano::pipeline::graphics::GraphicsPipelineCreationError;
-use vulkano::pipeline::{GraphicsPipeline, Pipeline, PipelineBindPoint};
-use vulkano::sampler::{
-    Filter, Sampler, SamplerCreateInfo, SamplerCreationError, SamplerMipmapMode,
+use vulkano::pipeline::graphics::GraphicsPipelineCreateInfo;
+use vulkano::pipeline::layout::PipelineDescriptorSetLayoutCreateInfo;
+use vulkano::pipeline::{
+    GraphicsPipeline, Pipeline, PipelineBindPoint, PipelineLayout, PipelineShaderStageCreateInfo,
 };
-use vulkano::shader::ShaderModule;
+use vulkano::render_pass::RenderPass;
+use vulkano::shader::EntryPoint;
+use vulkano::{Validated, VulkanError};
 
 use crate::ui::egui::epaint::{ImageDelta, Primitive};
 
@@ -37,7 +39,7 @@ pub struct EguiOnVulkanoPainter {
     pub texture_sampler: Arc<Sampler>,
     pub textures: HashMap<TextureId, Arc<PersistentDescriptorSet>>,
     pub textures_to_free: Vec<TextureId>,
-    pub images: HashMap<TextureId, Arc<StorageImage>>,
+    pub images: HashMap<TextureId, Arc<Image>>,
     pub desc_allocator: StandardDescriptorSetAllocator,
     pub memo_allocator: StandardMemoryAllocator,
 }
@@ -46,13 +48,14 @@ impl EguiOnVulkanoPainter {
     pub fn new(
         device: Arc<Device>,
         queue: Arc<Queue>,
-        image_format: Format,
-    ) -> Result<Self, PainterCreationError> {
+        render_pass: Arc<RenderPass>,
+        cache: Option<Arc<PipelineCache>>,
+    ) -> Result<Self, PipelineCreateError> {
         Ok(Self {
             queue,
             desc_allocator: StandardDescriptorSetAllocator::new(Arc::clone(&device)),
             memo_allocator: StandardMemoryAllocator::new_default(Arc::clone(&device)),
-            pipeline: Self::create_pipeline(Arc::clone(&device), image_format)?,
+            pipeline: Self::create_pipeline(Arc::clone(&device), render_pass, cache)?,
             texture_sampler: Self::create_texture_sampler(device)?,
             textures: HashMap::default(),
             textures_to_free: Vec::default(),
@@ -62,67 +65,71 @@ impl EguiOnVulkanoPainter {
 
     fn create_pipeline(
         device: Arc<Device>,
-        image_format: Format,
-    ) -> Result<Arc<GraphicsPipeline>, GraphicsPipelineCreationError> {
-        GraphicsPipeline::start()
-            .vertex_input_state(AdapterVertex::per_vertex())
-            .input_assembly_state(InputAssemblyState::new())
-            .vertex_shader(
-                Self::load_vertex_shader(Arc::clone(&device))
-                    .entry_point("main")
-                    .unwrap(),
-                (),
-            )
-            .viewport_state(ViewportState::viewport_dynamic_scissor_dynamic(1))
-            .fragment_shader(
-                Self::load_fragment_shader(Arc::clone(&device))
-                    .entry_point("main")
-                    .unwrap(),
-                (),
-            )
-            .rasterization_state(RasterizationState::new().cull_mode(CullMode::None))
-            .color_blend_state(ColorBlendState::new(1).blend({
-                let mut blend = AttachmentBlend::alpha();
-                blend.color_source = BlendFactor::One;
-                blend
-            }))
-            .render_pass(PipelineRenderingCreateInfo {
-                color_attachment_formats: vec![Some(image_format)],
-                ..Default::default()
-            })
-            .build(device)
+        render_pass: Arc<RenderPass>,
+        cache: Option<Arc<PipelineCache>>,
+    ) -> Result<Arc<GraphicsPipeline>, PipelineCreateError> {
+        let vs = Self::load_vertex_shader(Arc::clone(&device))?;
+        let fs = Self::load_fragment_shader(Arc::clone(&device))?;
+
+        let vertex_input_state =
+            AdapterVertex::per_vertex().definition(&vs.info().input_interface)?;
+
+        let stages = [
+            PipelineShaderStageCreateInfo::new(vs),
+            PipelineShaderStageCreateInfo::new(fs),
+        ];
+
+        let layout = PipelineLayout::new(
+            Arc::clone(&device),
+            PipelineDescriptorSetLayoutCreateInfo::from_stages(&stages)
+                .into_pipeline_layout_create_info(Arc::clone(&device))?,
+        )?;
+
+        Ok(GraphicsPipeline::new(
+            Arc::clone(&device),
+            cache,
+            GraphicsPipelineCreateInfo {
+                stages: stages.into_iter().collect(),
+                vertex_input_state: Some(vertex_input_state),
+                input_assembly_state: Some(
+                    InputAssemblyState::default().topology(PrimitiveTopology::TriangleList),
+                ),
+                viewport_state: Some(ViewportState::viewport_dynamic_scissor_dynamic(1)),
+                rasterization_state: Some(RasterizationState::new().cull_mode(CullMode::None)),
+                multisample_state: Some(MultisampleState::default()),
+                color_blend_state: Some(ColorBlendState::new(1).blend({
+                    let mut blend = AttachmentBlend::alpha();
+                    blend.src_color_blend_factor = BlendFactor::One;
+                    blend
+                })),
+                subpass: Some(subpass_from_renderpass(render_pass)?),
+                ..GraphicsPipelineCreateInfo::layout(layout)
+            },
+        )?)
     }
 
-    fn create_texture_sampler(device: Arc<Device>) -> Result<Arc<Sampler>, SamplerCreationError> {
+    fn create_texture_sampler(device: Arc<Device>) -> Result<Arc<Sampler>, Validated<VulkanError>> {
         Sampler::new(
             device,
             SamplerCreateInfo {
                 mag_filter: Filter::Linear,
                 min_filter: Filter::Linear,
                 mipmap_mode: SamplerMipmapMode::Linear,
-                ..Default::default()
+                ..SamplerCreateInfo::default()
             },
         )
     }
 
-    fn load_vertex_shader(device: Arc<Device>) -> Arc<ShaderModule> {
-        mod shader {
-            vulkano_shaders::shader!(
-                ty: "vertex",
-                path: "src/engine/system/vulkan/egui/egui.vert"
-            );
-        }
-        shader::load(device).unwrap()
+    fn load_vertex_shader(device: Arc<Device>) -> Result<EntryPoint, ShaderLoadError> {
+        shader_from_path!(device, "vertex", "src/engine/system/vulkan/egui/egui.vert")
     }
 
-    fn load_fragment_shader(device: Arc<Device>) -> Arc<ShaderModule> {
-        mod shader {
-            vulkano_shaders::shader!(
-                ty: "fragment",
-                path: "src/engine/system/vulkan/egui/egui.frag"
-            );
-        }
-        shader::load(device).unwrap()
+    fn load_fragment_shader(device: Arc<Device>) -> Result<EntryPoint, ShaderLoadError> {
+        shader_from_path!(
+            device,
+            "fragment",
+            "src/engine/system/vulkan/egui/egui.frag"
+        )
     }
 
     pub fn draw<P>(
@@ -134,7 +141,7 @@ impl EguiOnVulkanoPainter {
     ) -> Result<(), DrawError> {
         builder
             //.next_subpass(SubpassContents::Inline)?
-            .bind_pipeline_graphics(Arc::clone(&self.pipeline));
+            .bind_pipeline_graphics(Arc::clone(&self.pipeline))?;
 
         let mut vertices = Vec::<AdapterVertex>::with_capacity(clipped_primitives.len() * 4);
         let mut indices = Vec::<u32>::with_capacity(clipped_primitives.len() * 6);
@@ -188,19 +195,21 @@ impl EguiOnVulkanoPainter {
                     .set_scissor(
                         0,
                         [Scissor {
-                            origin: [rect.min.x as u32, rect.min.y as u32],
-                            dimensions: [rect.width() as u32, rect.height() as u32],
-                        }],
-                    )
-                    .bind_vertex_buffers(0, vertices)
-                    .bind_index_buffer(indices)
+                            offset: [rect.min.x as u32, rect.min.y as u32],
+                            extent: [rect.width() as u32, rect.height() as u32],
+                        }]
+                        .into_iter()
+                        .collect(),
+                    )?
+                    .bind_vertex_buffers(0, vertices)?
+                    .bind_index_buffer(indices)?
                     .bind_descriptor_sets(
                         PipelineBindPoint::Graphics,
                         Arc::clone(&self.pipeline.layout()),
                         0,
                         Arc::clone(texture),
-                    )
-                    .push_constants(Arc::clone(&self.pipeline.layout()), 0, [width, height])
+                    )?
+                    .push_constants(Arc::clone(&self.pipeline.layout()), 0, [width, height])?
                     .draw_indexed(index_count, 1, 0, 0, 0)?;
             }
         }
@@ -216,29 +225,43 @@ impl EguiOnVulkanoPainter {
         }
     }
 
-    fn create_buffers(
+    fn create_buffers<V, I>(
         &self,
-        vertices: Vec<AdapterVertex>,
-        indices: Vec<u32>,
-    ) -> Result<(Subbuffer<[AdapterVertex]>, Subbuffer<[u32]>), BufferError> {
-        let vertices = Buffer::from_iter(
-            &self.memo_allocator,
-            BufferAllocateInfo {
-                buffer_usage: BufferUsage::VERTEX_BUFFER,
-                ..BufferAllocateInfo::default()
-            },
-            vertices,
-        )?;
-        let indices = Buffer::from_iter(
-            &self.memo_allocator,
-            BufferAllocateInfo {
-                buffer_usage: BufferUsage::INDEX_BUFFER,
-                ..BufferAllocateInfo::default()
-            },
-            indices,
-        )?;
+        vertices: V,
+        indices: I,
+    ) -> Result<(Subbuffer<[AdapterVertex]>, Subbuffer<[u32]>), Validated<BufferAllocateError>>
+    where
+        V: IntoIterator<Item = AdapterVertex>,
+        V::IntoIter: ExactSizeIterator,
+        I: IntoIterator<Item = u32>,
+        I::IntoIter: ExactSizeIterator,
+    {
+        let allocation_info = AllocationCreateInfo {
+            memory_type_filter: MemoryTypeFilter::PREFER_DEVICE
+                | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
+            ..AllocationCreateInfo::default()
+        };
 
-        Ok((vertices, indices))
+        Ok((
+            Buffer::from_iter(
+                &self.memo_allocator,
+                BufferCreateInfo {
+                    usage: BufferUsage::VERTEX_BUFFER,
+                    ..BufferCreateInfo::default()
+                },
+                allocation_info.clone(),
+                vertices,
+            )?,
+            Buffer::from_iter(
+                &self.memo_allocator,
+                BufferCreateInfo {
+                    usage: BufferUsage::INDEX_BUFFER,
+                    ..BufferCreateInfo::default()
+                },
+                allocation_info,
+                indices,
+            )?,
+        ))
     }
 
     pub fn update_textures<P>(
@@ -251,7 +274,7 @@ impl EguiOnVulkanoPainter {
 
         for (texture_id, delta) in &textures_delta.set {
             let image = if delta.is_whole() {
-                let image = self.create_image(&*self.queue, &delta.image)?;
+                let image = self.create_image(&delta.image)?;
                 let layout = &self.pipeline.layout().set_layouts()[0];
 
                 let desc = PersistentDescriptorSet::new(
@@ -262,6 +285,7 @@ impl EguiOnVulkanoPainter {
                         ImageView::new_default(Arc::clone(&image))?,
                         Arc::clone(&self.texture_sampler),
                     )],
+                    [],
                 )?;
 
                 self.textures.insert(*texture_id, desc);
@@ -277,41 +301,41 @@ impl EguiOnVulkanoPainter {
         Ok(())
     }
 
-    fn create_image(
-        &self,
-        queue: &Queue,
-        image: &ImageData,
-    ) -> Result<Arc<StorageImage>, ImageError> {
-        let dimensions = ImageDimensions::Dim2d {
-            width: image.width() as u32,
-            height: image.height() as u32,
-            array_layers: 1,
-        };
-
-        StorageImage::with_usage(
+    fn create_image(&self, image: &ImageData) -> Result<Arc<Image>, Validated<ImageAllocateError>> {
+        Image::new(
             &self.memo_allocator,
-            dimensions,
-            Format::R8G8B8A8_SRGB,
-            ImageUsage::TRANSFER_DST | ImageUsage::SAMPLED,
-            ImageCreateFlags::empty(),
-            [queue.queue_family_index()],
+            ImageCreateInfo {
+                image_type: ImageType::Dim2d,
+                format: Format::R8G8B8A8_SRGB,
+                extent: [image.width() as u32, image.height() as u32, 1],
+                usage: ImageUsage::TRANSFER_DST | ImageUsage::SAMPLED,
+                ..ImageCreateInfo::default()
+            },
+            AllocationCreateInfo {
+                memory_type_filter: MemoryTypeFilter::PREFER_DEVICE,
+                ..AllocationCreateInfo::default()
+            },
         )
     }
 
     fn upload_image_or_delta<P>(
         &mut self,
-        image: Arc<StorageImage>,
+        image: Arc<Image>,
         delta: &ImageDelta,
         builder: &mut AutoCommandBufferBuilder<P>,
-    ) -> Result<(), UploadError> {
+    ) -> Result<(), Validated<BufferAllocateError>> {
         builder.copy_buffer_to_image({
             let mut copy_info = CopyBufferToImageInfo::buffer_image(
                 Buffer::from_iter(
                     &self.memo_allocator,
-                    BufferAllocateInfo {
-                        buffer_usage: BufferUsage::TRANSFER_SRC,
-                        memory_usage: MemoryUsage::Upload,
-                        ..BufferAllocateInfo::default()
+                    BufferCreateInfo {
+                        usage: BufferUsage::TRANSFER_SRC,
+                        ..BufferCreateInfo::default()
+                    },
+                    AllocationCreateInfo {
+                        memory_type_filter: MemoryTypeFilter::PREFER_HOST
+                            | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
+                        ..AllocationCreateInfo::default()
                     },
                     match &delta.image {
                         ImageData::Color(color_data) => color_data
@@ -362,36 +386,4 @@ impl From<&egui::epaint::Vertex> for AdapterVertex {
             color: value.color.to_array().map(|v| f32::from(v) / 255.0),
         }
     }
-}
-
-#[derive(thiserror::Error, Debug)]
-pub enum PainterCreationError {
-    #[error("Failed to create graphics pipeline: {0}")]
-    GraphicsPipelineCreationError(#[from] GraphicsPipelineCreationError),
-    #[error("Failed to create texture sampler: {0}")]
-    SamplerCreationError(#[from] SamplerCreationError),
-}
-
-#[derive(thiserror::Error, Debug)]
-pub enum UploadError {
-    #[error("Failed to upload the image: {0}")]
-    ImageError(#[from] ImageError),
-    #[error("Failed to create the image view: {0}")]
-    ImageViewCreationError(#[from] ImageViewCreationError),
-    #[error("Failed to create the descriptor set: {0}")]
-    DescriptorSetCreationError(#[from] DescriptorSetCreationError),
-    #[error("Failed to create the buffer: {0}")]
-    BufferError(#[from] BufferError),
-    #[error("Failed to copy to the buffer: {0}")]
-    CopyError(#[from] CopyError),
-}
-
-#[derive(thiserror::Error, Debug)]
-pub enum DrawError {
-    #[error("Unable to configure rendering: {0}")]
-    RenderPassError(#[from] RenderPassError),
-    #[error("Unable to upload buffer contents: {0}")]
-    BufferError(#[from] BufferError),
-    #[error("Unable to execute the pipeline: {0}")]
-    PipelineExecutionError(#[from] PipelineExecutionError),
 }

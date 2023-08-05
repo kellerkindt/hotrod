@@ -1,6 +1,5 @@
 use crate::engine::builder::EngineBuilder;
 use crate::engine::parts::sdl::SdlParts;
-use crate::engine::parts::vulkan::VulkanParts;
 use crate::engine::system::canvas::buffered_layer::BufferedCanvasLayer;
 use crate::engine::system::vulkan::beautiful_lines::{
     BeautifulLine, Vertex2d, VulkanBeautifulLineSystem,
@@ -17,11 +16,9 @@ use std::io::Cursor;
 use std::ops::{Div, Mul};
 use std::sync::Arc;
 use std::time::{Instant, UNIX_EPOCH};
-use vulkano::instance::{Instance, InstanceCreationError, InstanceExtensions};
-use vulkano::pipeline::graphics::GraphicsPipelineCreationError;
-use vulkano::sampler::SamplerCreationError;
+use vulkano::instance::{Instance, InstanceExtensions};
 use vulkano::swapchain::{Surface, SurfaceApi};
-use vulkano::{Handle, LoadingError, VulkanLibrary, VulkanObject};
+use vulkano::{Handle, LoadingError, Validated, VulkanError, VulkanLibrary, VulkanObject};
 
 pub mod builder;
 pub mod parts;
@@ -29,8 +26,6 @@ pub mod system;
 pub mod types;
 
 pub struct Engine {
-    sdl: SdlParts,
-    vulkan: VulkanParts,
     vulkan_system: VulkanSystem,
     vulkan_lines: VulkanLineSystem,
     vulkan_textures: VulkanTextureSystem,
@@ -39,6 +34,8 @@ pub struct Engine {
     egui_system: system::vulkan::egui::EguiSystem,
     #[cfg(feature = "ui-egui")]
     egui_parts: parts::egui::EguiParts,
+    // drop after the vulkan system! (last is fine, too)
+    sdl: SdlParts,
 }
 
 impl Engine {
@@ -70,11 +67,17 @@ impl Engine {
             instance_info
         })?;
 
+        // ============================ WARNING ============================
+        //   Because of this unsafe linkage the `window` object *must not*
+        //   be dropped before the vulkan stuff / swapchain or the program
+        //   will experience a SIGSEGV!
+        // =================================================================
         let surface_handle = window
             .vulkan_create_surface(instance.handle().as_raw() as _)
             .map_err(Error::SdlCreateVulkanSurfaceError)?;
 
         // SAFETY: that's the way it is
+        // SAFETY: Be sure not to drop the `window` before the `Surface` or vulkan `Swapchain`! (SIGSEGV otherwise)
         let surface = Arc::new(unsafe {
             Surface::from_handle(
                 Arc::clone(&instance),
@@ -84,11 +87,6 @@ impl Engine {
             )
         });
 
-        let vulkan = VulkanParts {
-            instance,
-            surface: Arc::clone(&surface),
-            surface_handle,
-        };
         let vulkan_system = VulkanSystem::new(
             surface,
             builder.window_width,
@@ -97,28 +95,29 @@ impl Engine {
         )?;
 
         Ok(Self {
-            sdl: SdlParts {
-                context,
-                video_subsystem,
-                event_pump,
-                window,
-            },
             #[cfg(feature = "ui-egui")]
-            egui_system: crate::engine::system::vulkan::egui::EguiSystem::new(
+            egui_system: system::vulkan::egui::EguiSystem::new(
                 Arc::clone(&vulkan_system.device()),
                 Arc::clone(&vulkan_system.queue()),
-                vulkan_system.image_format(),
+                Arc::clone(&vulkan_system.render_pass()),
+                vulkan_system.pipeline_cache().map(Arc::clone),
                 builder.window_width as f32,
                 builder.window_height as f32,
             )
             .unwrap(),
             #[cfg(feature = "ui-egui")]
             egui_parts: parts::egui::EguiParts::default(),
-            vulkan,
             vulkan_lines: VulkanLineSystem::try_from(&vulkan_system)?,
             vulkan_textures: VulkanTextureSystem::try_from(&vulkan_system)?,
             vulkan_beautiful_lines: VulkanBeautifulLineSystem::try_from(&vulkan_system)?,
             vulkan_system,
+            sdl: SdlParts {
+                video_subsystem,
+                event_pump,
+                // drop after the vulkan system!
+                window,
+                context,
+            },
         })
     }
 
@@ -196,7 +195,7 @@ impl Engine {
                 });
             }
 
-            self.vulkan_system.render(width, height, |builder| {
+            let render_result = self.vulkan_system.render(width, height, |builder| {
                 #[cfg(feature = "ui-egui")]
                 self.egui_system.prepare_render(builder).unwrap();
 
@@ -363,6 +362,10 @@ impl Engine {
                 }
             });
 
+            if let Err(e) = render_result {
+                eprintln!("RENDER ERROR: {e:?}");
+            }
+
             let duration_to_end = time_start.elapsed();
             let expected_fps = 1.0 / duration_to_end.as_secs_f32();
             eprintln!("duration_to_end={duration_to_end:?}, ~fps={expected_fps:.2}");
@@ -389,28 +392,14 @@ pub enum Error {
     SdlWindowBuildError(#[from] WindowBuildError),
     #[error("SDL failed to create a vulkan surface: {0}")]
     SdlCreateVulkanSurfaceError(String),
-    #[error("Failed to create a Vulkan instance: {0}")]
-    VulkanInstanceCreationError(#[from] InstanceCreationError),
+    // #[error("Failed to create a Vulkan instance: {0}")]
+    // VulkanInstanceCreateInfo(#[from] InstanceCreateInfo),
     #[error("Failed to load the vulkan library: {0}")]
     VulkanLibraryLoadingError(#[from] LoadingError),
-    #[error("Error in vulkan system: {0}")]
+    #[error("Validated Vulkan Error: {0}")]
+    ValidatedVulkanError(#[from] Validated<VulkanError>),
+    #[error("Vulkan System Error: {0}")]
     VulkanSystemError(#[from] system::vulkan::Error),
-    #[error("Failed to load at least one subsystem: {0}")]
-    VulkanSubsystemError(#[from] GraphicsPipelineCreationError),
-    #[error("Failed to load at least one subsystem because of an sampler creation error: {0}")]
-    VulkanSubsystemSamplerError(#[from] SamplerCreationError),
-}
-
-impl From<system::vulkan::textures::CreationError> for Error {
-    #[inline]
-    fn from(error: system::vulkan::textures::CreationError) -> Self {
-        match dbg!(error) {
-            system::vulkan::textures::CreationError::GraphicsPipelineCreationError(e) => {
-                Self::VulkanSubsystemError(e)
-            }
-            system::vulkan::textures::CreationError::SamplerCreationError(e) => {
-                Self::VulkanSubsystemSamplerError(e)
-            }
-        }
-    }
+    #[error("Failed to create a Vulkan System Pipeline: {0}")]
+    PipelineSystemCreateError(#[from] system::vulkan::PipelineCreateError),
 }

@@ -1,34 +1,30 @@
+use crate::engine::system::vulkan::utils::pipeline::single_pass_render_pass_from_image_format;
 use std::sync::Arc;
 use std::time::Duration;
-use vulkano::buffer::{BufferAllocateInfo, BufferUsage};
+use vulkano::buffer::BufferAllocateError;
 use vulkano::command_buffer::allocator::StandardCommandBufferAllocator;
 use vulkano::command_buffer::{
-    AutoCommandBufferBuilder, CommandBufferUsage, PrimaryAutoCommandBuffer,
-    RenderingAttachmentInfo, RenderingInfo,
+    AutoCommandBufferBuilder, CommandBufferUsage, PrimaryAutoCommandBuffer, RenderPassBeginInfo,
+    SubpassBeginInfo, SubpassEndInfo,
 };
-use vulkano::device::physical::{PhysicalDevice, PhysicalDeviceError, PhysicalDeviceType};
+use vulkano::device::physical::{PhysicalDevice, PhysicalDeviceType};
 use vulkano::device::{
-    Device, DeviceCreateInfo, DeviceCreationError, DeviceExtensions, Features, Queue,
-    QueueCreateInfo, QueueFlags,
+    Device, DeviceCreateInfo, DeviceExtensions, Features, Queue, QueueCreateInfo, QueueFlags,
 };
 use vulkano::format::Format;
 use vulkano::image::view::ImageView;
-use vulkano::image::{ImageAccess, ImageUsage, SwapchainImage};
-use vulkano::memory::allocator::{
-    FreeListAllocator, GenericMemoryAllocator, StandardMemoryAllocator,
-};
-use vulkano::pipeline::graphics::input_assembly::InputAssemblyState;
-use vulkano::pipeline::graphics::render_pass::PipelineRenderingCreateInfo;
-use vulkano::pipeline::graphics::vertex_input::Vertex;
-use vulkano::pipeline::graphics::viewport::{Viewport, ViewportState};
-use vulkano::pipeline::GraphicsPipeline;
-use vulkano::render_pass::{LoadOp, RenderPassCreationError, StoreOp};
+use vulkano::image::{Image, ImageAllocateError, ImageUsage};
+use vulkano::pipeline::cache::PipelineCache;
+use vulkano::pipeline::graphics::viewport::Viewport;
+use vulkano::pipeline::layout::IntoPipelineLayoutCreateInfoError;
+use vulkano::render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass};
 use vulkano::swapchain::{
-    acquire_next_image, Surface, Swapchain, SwapchainCreateInfo, SwapchainCreationError,
-    SwapchainPresentInfo,
+    acquire_next_image, Surface, Swapchain, SwapchainCreateInfo, SwapchainPresentInfo,
 };
-use vulkano::sync::{FlushError, GpuFuture};
-use vulkano::{Version, VulkanError};
+use vulkano::sync::GpuFuture;
+use vulkano::{Validated, ValidationError, Version, VulkanError};
+
+pub mod utils;
 
 pub mod beautiful_lines;
 #[cfg(feature = "ui-egui")]
@@ -37,12 +33,12 @@ pub mod lines;
 pub mod textures;
 
 pub struct VulkanSystem {
-    surface: Arc<Surface>,
     device: Arc<Device>,
     queue: Arc<Queue>,
+    render_pass: Arc<RenderPass>,
     swapchain: Arc<Swapchain>,
-    swapchain_images: Vec<Arc<SwapchainImage>>,
-    allocator: GenericMemoryAllocator<Arc<FreeListAllocator>>,
+    swapchain_images: Vec<Arc<Image>>,
+    swapchain_framebuffers: Vec<Arc<Framebuffer>>,
     recreate_swapchain: bool,
     previous_frame_end: Option<Box<dyn GpuFuture>>,
 }
@@ -77,19 +73,26 @@ impl VulkanSystem {
                 }],
                 ..Default::default()
             },
-        )?;
+        )
+        .map_err(Error::DeviceInitializationFailed)?;
 
         let (swapchain, swapchain_images) = create_swapchain(&device, &surface, [width, height])?;
+        let render_pass = single_pass_render_pass_from_image_format(
+            Arc::clone(&device),
+            swapchain.image_format(),
+        )
+        .map_err(Error::FailedToCreateFramebuffers)?;
 
         Ok(Self {
             queue: queues.next().expect("Promised queue is not present"),
-            allocator: StandardMemoryAllocator::new_default(Arc::clone(&device)),
             recreate_swapchain: false,
             previous_frame_end: Some(vulkano::sync::now(Arc::clone(&device)).boxed()),
-            surface,
             device,
+            swapchain_framebuffers: create_framebuffers(&swapchain_images, &render_pass)
+                .map_err(Error::FailedToCreateFramebuffers)?,
             swapchain,
             swapchain_images,
+            render_pass,
         })
     }
 
@@ -109,90 +112,32 @@ impl VulkanSystem {
     }
 
     #[inline]
+    pub fn render_pass(&self) -> &Arc<RenderPass> {
+        &self.render_pass
+    }
+
+    #[inline]
+    pub fn pipeline_cache(&self) -> Option<&Arc<PipelineCache>> {
+        eprintln!("NO PipelineCache configured!");
+        None
+    }
+
+    #[inline]
     pub fn recreatee_swapchain(&mut self) {
         self.recreate_swapchain = true;
     }
 
     // TODO just for demo
-    pub fn render<F1, F2>(&mut self, width: u32, height: u32, before_render: F1)
+    pub fn render<F1, F2>(
+        &mut self,
+        width: u32,
+        height: u32,
+        before_render: F1,
+    ) -> Result<(), DrawError>
     where
         F1: FnOnce(&mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>) -> F2,
         F2: FnOnce(&mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>),
     {
-        // We now create a buffer that will store the shape of our triangle.
-        // We use #[repr(C)] here to force rustc to not do anything funky with our data, although for this
-        // particular example, it doesn't actually change the in-memory representation.
-        use bytemuck::{Pod, Zeroable};
-        #[repr(C)]
-        #[derive(Clone, Copy, Debug, Default, Zeroable, Pod, Vertex)]
-        struct Vertex {
-            #[format(R32G32_SFLOAT)]
-            position: [f32; 2],
-        }
-
-        let vertices = [
-            Vertex {
-                position: [-0.5, -0.25],
-            },
-            Vertex {
-                position: [0.0, 0.5],
-            },
-            Vertex {
-                position: [0.25, -0.1],
-            },
-        ];
-        let vertex_buffer = vulkano::buffer::Buffer::from_iter(
-            &self.allocator,
-            BufferAllocateInfo {
-                buffer_usage: BufferUsage::VERTEX_BUFFER,
-                ..Default::default()
-            },
-            vertices,
-        )
-        .unwrap();
-
-        mod vs {
-            vulkano_shaders::shader! {
-                ty: "vertex",
-                src: "
-				#version 450
-				layout(location = 0) in vec2 position;
-				void main() {
-					gl_Position = vec4(position, 0.0, 1.0);
-				}
-			"
-            }
-        }
-
-        mod fs {
-            vulkano_shaders::shader! {
-                ty: "fragment",
-                src: "
-				#version 450
-				layout(location = 0) out vec4 f_color;
-				void main() {
-					f_color = vec4(1.0, 0.0, 0.0, 1.0);
-				}
-			"
-            }
-        }
-
-        let vs = vs::load(self.device.clone()).unwrap();
-        let fs = fs::load(self.device.clone()).unwrap();
-
-        let pipeline = GraphicsPipeline::start()
-            .render_pass(PipelineRenderingCreateInfo {
-                color_attachment_formats: vec![Some(self.swapchain.image_format())],
-                ..Default::default()
-            })
-            .vertex_input_state(Vertex::per_vertex())
-            .input_assembly_state(InputAssemblyState::new())
-            .vertex_shader(vs.entry_point("main").unwrap(), ())
-            .viewport_state(ViewportState::viewport_dynamic_scissor_irrelevant())
-            .fragment_shader(fs.entry_point("main").unwrap(), ())
-            .build(Arc::clone(&self.device))
-            .unwrap();
-
         let command_buffer_allocator =
             StandardCommandBufferAllocator::new(Arc::clone(&self.device), Default::default());
 
@@ -204,15 +149,19 @@ impl VulkanSystem {
                 ..self.swapchain.create_info()
             }) {
                 Ok((new_swapchain, new_image)) => {
+                    eprintln!("Swapchain re-recreated");
                     self.swapchain = new_swapchain;
                     self.swapchain_images = new_image;
+                    self.swapchain_framebuffers =
+                        create_framebuffers(&self.swapchain_images, &self.render_pass)
+                            .map_err(DrawError::FailedToRecreateTheFramebuffers)?;
                 }
                 Err(e) => {
                     eprintln!("{e}");
                     eprintln!("{e:?}");
                     // try again
                     self.recreate_swapchain = true;
-                    return;
+                    return Ok(());
                     // panic!()
                 }
             }
@@ -232,51 +181,37 @@ impl VulkanSystem {
         )
         .unwrap();
 
-        let mut viewport = Viewport {
-            origin: [0.0, 0.0],
-            dimensions: [0.0, 0.0],
-            depth_range: 0.0..1.0,
-        };
-        let attachment_image_views =
-            window_size_dependent_setup(&self.swapchain_images, &mut viewport);
-
         let inside_render = before_render(&mut builder);
         builder
-            .begin_rendering(RenderingInfo {
-                color_attachments: vec![Some(RenderingAttachmentInfo {
-                    // `Clear` means that we ask the GPU to clear the content of this
-                    // attachment at the start of rendering.
-                    load_op: LoadOp::Clear,
-                    // `Store` means that we ask the GPU to store the rendered output
-                    // in the attachment image. We could also ask it to discard the result.
-                    store_op: StoreOp::Store,
-                    // The value to clear the attachment with. Here we clear it with a
-                    // blue color.
-                    //
-                    // Only attachments that have `LoadOp::Clear` are provided with
-                    // clear values, any others should use `None` as the clear value.
-                    clear_value: Some([0.0, 0.5, 1.0, 1.0].into()),
-                    // clear_value: Some([0.0, 0.0, 0.0, 1.0].into()),
-                    ..RenderingAttachmentInfo::image_view(
-                        // We specify image view corresponding to the currently acquired
-                        // swapchain image, to use for this attachment.
-                        attachment_image_views[image_index as usize].clone(),
-                    )
-                })],
-                ..Default::default()
-            })
-            .unwrap()
-            .set_viewport(0, [viewport])
-            .bind_pipeline_graphics(pipeline)
-            .bind_vertex_buffers(0, vertex_buffer.clone())
-            .draw(vertex_buffer.len() as u32, 1, 0, 0)
-            .unwrap();
+            .begin_render_pass(
+                RenderPassBeginInfo {
+                    clear_values: vec![Some([0.0, 0.5, 1.0, 1.0].into())],
+                    ..RenderPassBeginInfo::framebuffer(Arc::clone(
+                        &self.swapchain_framebuffers[image_index as usize],
+                    ))
+                },
+                SubpassBeginInfo::default(),
+            )?
+            .set_viewport(
+                0,
+                [Viewport {
+                    offset: [0.0, 0.0],
+                    extent: [
+                        self.swapchain_images[0].extent()[0] as f32,
+                        self.swapchain_images[0].extent()[1] as f32,
+                    ],
+                    depth_range: 0.0..=1.0,
+                }]
+                .into_iter()
+                .collect(),
+            )?;
 
         inside_render(&mut builder);
+        builder.end_render_pass(SubpassEndInfo::default())?;
 
-        builder.end_rendering().unwrap();
-
-        let command_buffer = builder.build().unwrap();
+        let command_buffer = builder
+            .build()
+            .map_err(DrawError::FailedToBuildCommandBuffer)?;
 
         let future = self
             .previous_frame_end
@@ -294,11 +229,11 @@ impl VulkanSystem {
             )
             .then_signal_fence_and_flush();
 
-        match future {
+        match future.map_err(Validated::unwrap) {
             Ok(future) => {
                 self.previous_frame_end = Some(future.boxed());
             }
-            Err(FlushError::OutOfDate) => {
+            Err(VulkanError::OutOfDate) => {
                 self.recreate_swapchain = true;
                 self.previous_frame_end =
                     Some(vulkano::sync::now(Arc::clone(&self.device)).boxed());
@@ -310,18 +245,7 @@ impl VulkanSystem {
             }
         }
 
-        fn window_size_dependent_setup(
-            images: &[Arc<SwapchainImage>],
-            viewport: &mut Viewport,
-        ) -> Vec<Arc<ImageView<SwapchainImage>>> {
-            let dimensions = images[0].dimensions().width_height();
-            viewport.dimensions = [dimensions[0] as f32, dimensions[1] as f32];
-
-            images
-                .iter()
-                .map(|image| ImageView::new_default(image.clone()).unwrap())
-                .collect::<Vec<_>>()
-        }
+        Ok(())
     }
 }
 
@@ -399,21 +323,19 @@ fn create_swapchain(
     device: &Arc<Device>,
     surface: &Arc<Surface>,
     image_extent: [u32; 2],
-) -> Result<(Arc<Swapchain>, Vec<Arc<SwapchainImage>>), Error> {
+) -> Result<(Arc<Swapchain>, Vec<Arc<Image>>), Error> {
     let surface_capabilities = device
         .physical_device()
         .surface_capabilities(&surface, Default::default())
         .map_err(Error::FailedToRetrieveSurfaceCapabilities)?;
 
-    let image_format = Some(
-        device
-            .physical_device()
-            .surface_formats(&surface, Default::default())
-            .map_err(Error::FailedToRetrieveSurfaceFormats)?[0]
-            .0,
-    );
+    let image_format = device
+        .physical_device()
+        .surface_formats(&surface, Default::default())
+        .map_err(Error::FailedToRetrieveSurfaceFormats)?[0]
+        .0;
 
-    Ok(Swapchain::new(
+    Swapchain::new(
         Arc::clone(&device),
         Arc::clone(&surface),
         SwapchainCreateInfo {
@@ -428,7 +350,26 @@ fn create_swapchain(
                 .unwrap(),
             ..Default::default()
         },
-    )?)
+    )
+    .map_err(Error::SwapchainInitializationFailed)
+}
+
+fn create_framebuffers(
+    images: &[Arc<Image>],
+    render_pass: &Arc<RenderPass>,
+) -> Result<Vec<Arc<Framebuffer>>, Validated<VulkanError>> {
+    images
+        .iter()
+        .map(|image| {
+            Framebuffer::new(
+                Arc::clone(&render_pass),
+                FramebufferCreateInfo {
+                    attachments: vec![ImageView::new_default(Arc::clone(image))?],
+                    ..FramebufferCreateInfo::default()
+                },
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -440,13 +381,61 @@ pub enum Error {
     #[error("Unable to find physical devices that satisfies all needs")]
     NoSatisfyingPhysicalDevicePresent,
     #[error("Failed to initialize device instance {0:?}")]
-    DeviceInitializationFailed(#[from] DeviceCreationError),
+    DeviceInitializationFailed(Validated<VulkanError>),
     #[error("Failed to initialize swapchain instance {0:?}")]
-    SwapchainInitializationFailed(#[from] SwapchainCreationError),
+    SwapchainInitializationFailed(Validated<VulkanError>),
     #[error("Failed to retrieve surface capabilities: {0:?}")]
-    FailedToRetrieveSurfaceCapabilities(PhysicalDeviceError),
+    FailedToRetrieveSurfaceCapabilities(Validated<VulkanError>),
     #[error("Failed to retrieve surface formats: {0:?}")]
-    FailedToRetrieveSurfaceFormats(PhysicalDeviceError),
+    FailedToRetrieveSurfaceFormats(Validated<VulkanError>),
+    #[error("Failed to create framebuffers: {0:?}")]
+    FailedToCreateFramebuffers(Validated<VulkanError>),
     #[error("Failed to create render pass: {0:?}")]
-    RenderPassCreationError(#[from] RenderPassCreationError),
+    RenderPassCreationError(#[from] PipelineCreateError),
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum DrawError {
+    // #[error("Vulkan Error: {0}")]
+    // VulkanError(#[from] Validated<VulkanError>),
+    #[error("Validation Error: {0}")]
+    ValidationError(#[from] Box<ValidationError>),
+    #[error("Failed to allocate buffer: {0}")]
+    BufferAllocateError(#[from] Validated<BufferAllocateError>),
+    #[error("Failed to re-create the framebuffers: {0}")]
+    FailedToRecreateTheFramebuffers(Validated<VulkanError>),
+    // #[error("Failed to execute the pipeline: {0}")]
+    // PipelineExecutionError(#[from] Validated<VulkanError>),
+    #[error("Failed to build command buffer: {0}")]
+    FailedToBuildCommandBuffer(Validated<VulkanError>),
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum UploadError {
+    #[error("Vulkan Error: {0}")]
+    VulkanError(#[from] Validated<VulkanError>),
+    #[error("Failed to upload the image: {0}")]
+    ImageError(#[from] Validated<ImageAllocateError>),
+    #[error("Failed to allocate buffer: {0}")]
+    BufferAllocateError(#[from] Validated<BufferAllocateError>),
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum PipelineCreateError {
+    #[error("Vulkan Error: {0}")]
+    VulkanError(#[from] Validated<VulkanError>),
+    #[error("Validation Error: {0}")]
+    ValidationError(#[from] Box<ValidationError>),
+    #[error("Failed to create pipeline: {0}")]
+    IntoPipelineLayoutCreateInfoError(#[from] IntoPipelineLayoutCreateInfoError),
+    #[error("Failed to load at least one shader: {0}")]
+    ShaderLoadError(#[from] ShaderLoadError),
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum ShaderLoadError {
+    #[error("Vulkan Error: {0}")]
+    VulkanError(#[from] Validated<VulkanError>),
+    #[error("The shader '{0}' is missing the entry point (function) '{1}")]
+    MissingEntryPoint(&'static str, &'static str),
 }

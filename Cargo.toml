@@ -12,8 +12,8 @@ license = "MIT OR Apache-2.0"
 [dependencies]
 sdl2 = { version = "0.35.2", features = ["gfx", "raw-window-handle"] }
 cgmath = "0.18.0"
-vulkano = { version = "0.32", git = "https://github.com/vulkano-rs/vulkano.git", rev = "5a050d85bfbc6a5a6a543ec5db195cb32740465d" }
-vulkano-shaders = { version = "0.32", git = "https://github.com/vulkano-rs/vulkano.git", rev = "5a050d85bfbc6a5a6a543ec5db195cb32740465d" }
+vulkano = { version = "0.33.0", git = "https://github.com/vulkano-rs/vulkano.git", rev = "344a15d677d84a8b45769992042f1a24ced14896" }
+vulkano-shaders = { version = "0.33.0", git = "https://github.com/vulkano-rs/vulkano.git", rev = "344a15d677d84a8b45769992042f1a24ced14896" }
 bytemuck = "1.13.0"
 thiserror = { version = "1.0.40", features = [] }
 log4rs = "1.2.0"
