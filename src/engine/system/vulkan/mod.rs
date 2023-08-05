@@ -34,6 +34,7 @@ pub mod beautiful_lines;
 #[cfg(feature = "ui-egui")]
 pub mod egui;
 pub mod lines;
+pub mod textures;
 
 pub struct VulkanSystem {
     surface: Arc<Surface>,

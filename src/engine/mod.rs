@@ -6,16 +6,20 @@ use crate::engine::system::vulkan::beautiful_lines::{
     BeautifulLine, Vertex2d, VulkanBeautifulLineSystem,
 };
 use crate::engine::system::vulkan::lines::VulkanLineSystem;
+use crate::engine::system::vulkan::textures::{Textured, Vertex2dUv, VulkanTextureSystem};
 use crate::engine::system::vulkan::VulkanSystem;
 use crate::engine::types::world2d::{Dim, Pos};
+use image::GenericImageView;
 use sdl2::event::{Event, WindowEvent};
 use sdl2::keyboard::Keycode;
 use sdl2::video::WindowBuildError;
+use std::io::{BufReader, Cursor};
 use std::ops::Mul;
 use std::sync::Arc;
-use std::time::{Instant, UNIX_EPOCH};
+use std::time::{Duration, Instant, UNIX_EPOCH};
 use vulkano::instance::{Instance, InstanceCreationError, InstanceExtensions};
 use vulkano::pipeline::graphics::GraphicsPipelineCreationError;
+use vulkano::sampler::SamplerCreationError;
 use vulkano::swapchain::{Surface, SurfaceApi};
 use vulkano::{Handle, LoadingError, VulkanLibrary, VulkanObject};
 
@@ -29,6 +33,7 @@ pub struct Engine {
     vulkan: VulkanParts,
     vulkan_system: VulkanSystem,
     vulkan_lines: VulkanLineSystem,
+    vulkan_textures: VulkanTextureSystem,
     vulkan_beautiful_lines: VulkanBeautifulLineSystem,
     #[cfg(feature = "ui-egui")]
     egui_system: system::vulkan::egui::EguiSystem,
@@ -111,6 +116,7 @@ impl Engine {
             egui_parts: parts::egui::EguiParts::default(),
             vulkan,
             vulkan_lines: VulkanLineSystem::try_from(&vulkan_system)?,
+            vulkan_textures: VulkanTextureSystem::try_from(&vulkan_system)?,
             vulkan_beautiful_lines: VulkanBeautifulLineSystem::try_from(&vulkan_system)?,
             vulkan_system,
         })
@@ -134,7 +140,14 @@ impl Engine {
     }
 
     pub fn run(mut self) -> Self {
+        const IMAGE_DATA: &[u8] = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/res/rust-logo-256x256.png",
+        ));
+
+        let mut texture = None;
         let mut maximized = false;
+
         'running: loop {
             let mut allow_maximize_change = true;
             let time_start = Instant::now();
@@ -186,6 +199,29 @@ impl Engine {
             self.vulkan_system.render(width, height, |builder| {
                 #[cfg(feature = "ui-egui")]
                 self.egui_system.prepare_render(builder).unwrap();
+
+                if texture.is_none() {
+                    let image = image::io::Reader::new(Cursor::new(IMAGE_DATA))
+                        .with_guessed_format()
+                        .unwrap()
+                        .decode()
+                        .unwrap();
+
+                    texture = Some(
+                        self.vulkan_textures
+                            .create_texture(
+                                builder,
+                                dbg!(image
+                                    .pixels()
+                                    .flat_map(|(_x, _y, rgba)| rgba.0)
+                                    .collect::<Vec<u8>>()),
+                                image.width(),
+                                image.height(),
+                            )
+                            .unwrap(),
+                    );
+                }
+
                 |builder| {
                     #[cfg(feature = "ui-egui")]
                     self.egui_system.render(builder).unwrap();
@@ -269,11 +305,51 @@ impl Engine {
                     layer.set_draw_color([1.0, 0.0, 1.0, 1.0]);
                     layer.draw_rect(Pos::new(200.0, 200.0), Dim::new(25.0, 25.0));
                     layer.submit_to_render_pass(builder, &mut self.vulkan_lines);
+
+                    if let Some(texture) = texture {
+                        self.vulkan_textures
+                            .draw(
+                                builder,
+                                width as f32,
+                                height as f32,
+                                &[Textured {
+                                    vertices: vec![
+                                        Vertex2dUv {
+                                            pos: [500.0, 100.0],
+                                            uv: [0.0, 0.0],
+                                        },
+                                        Vertex2dUv {
+                                            pos: [600.0, 100.0],
+                                            uv: [1.0, 0.0],
+                                        },
+                                        Vertex2dUv {
+                                            pos: [600.0, 200.0],
+                                            uv: [1.0, 1.0],
+                                        },
+                                        Vertex2dUv {
+                                            pos: [600.0, 200.0],
+                                            uv: [1.0, 1.0],
+                                        },
+                                        Vertex2dUv {
+                                            pos: [500.0, 200.0],
+                                            uv: [0.0, 1.0],
+                                        },
+                                        Vertex2dUv {
+                                            pos: [500.0, 100.0],
+                                            uv: [0.0, 0.0],
+                                        },
+                                    ],
+                                    texture,
+                                }],
+                            )
+                            .unwrap();
+                    }
                 }
             });
 
             let duration_to_end = time_start.elapsed();
-            dbg!(duration_to_end);
+            let expected_fps = 1.0 / duration_to_end.as_secs_f32();
+            eprintln!("duration_to_end={duration_to_end:?}, ~fps={expected_fps:.2}");
             ::std::thread::sleep(::std::time::Duration::new(0, 1_000_000_000u32 / 60));
         }
         self
@@ -305,4 +381,20 @@ pub enum Error {
     VulkanSystemError(#[from] system::vulkan::Error),
     #[error("Failed to load at least one subsystem: {0}")]
     VulkanSubsystemError(#[from] GraphicsPipelineCreationError),
+    #[error("Failed to load at least one subsystem because of an sampler creation error: {0}")]
+    VulkanSubsystemSamplerError(#[from] SamplerCreationError),
+}
+
+impl From<system::vulkan::textures::CreationError> for Error {
+    #[inline]
+    fn from(error: system::vulkan::textures::CreationError) -> Self {
+        match dbg!(error) {
+            system::vulkan::textures::CreationError::GraphicsPipelineCreationError(e) => {
+                Self::VulkanSubsystemError(e)
+            }
+            system::vulkan::textures::CreationError::SamplerCreationError(e) => {
+                Self::VulkanSubsystemSamplerError(e)
+            }
+        }
+    }
 }
