@@ -476,6 +476,7 @@ impl<'a> BeforeRenderContext<'a> {
                     f2(RenderContext {
                         commands,
                         canvas: &mut canvas,
+                        pipelines: &mut self.engine.vulkan_pipelines,
                     });
 
                     canvas.submit_to_render_pass(commands, &mut self.engine.vulkan_pipelines);
@@ -502,6 +503,7 @@ pub struct PrepareRenderContext<'a> {
 pub struct RenderContext<'a> {
     pub commands: &'a mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
     pub canvas: &'a mut BufferedCanvasLayer,
+    pub pipelines: &'a mut VulkanPipelines,
 }
 
 pub struct RenderResponse<T> {
