@@ -1,7 +1,6 @@
-use crate::engine::system::vulkan::lines::{Line, Vertex2d, VulkanLineSystem};
-use crate::engine::system::vulkan::textures::{
-    TextureId, Textured, Vertex2dUv, VulkanTextureSystem,
-};
+use crate::engine::system::vulkan::lines::{Line, Vertex2d};
+use crate::engine::system::vulkan::pipelines::VulkanPipelines;
+use crate::engine::system::vulkan::textures::{TextureId, Textured, Vertex2dUv};
 use crate::engine::types::world2d::{Dim, Pos};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, PrimaryAutoCommandBuffer};
 
@@ -115,20 +114,21 @@ impl BufferedCanvasLayer {
     pub fn submit_to_render_pass(
         self,
         cmd: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
-        line_system: &mut VulkanLineSystem,
-        texture_system: &mut VulkanTextureSystem,
+        pipeline: &mut VulkanPipelines,
     ) {
         for action in self.actions {
             match action {
                 Action::Lines(lines) => {
                     if let Err(e) =
-                        line_system.draw(cmd, self.size[0] as f32, self.size[1] as f32, &lines)
+                        pipeline
+                            .line
+                            .draw(cmd, self.size[0] as f32, self.size[1] as f32, &lines)
                     {
                         eprintln!("{e:?}");
                     }
                 }
                 Action::TexturedTriangle(textured) => {
-                    if let Err(e) = texture_system.draw(
+                    if let Err(e) = pipeline.texture.draw(
                         cmd,
                         self.size[0] as f32,
                         self.size[1] as f32,

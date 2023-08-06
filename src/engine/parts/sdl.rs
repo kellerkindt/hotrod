@@ -5,5 +5,6 @@ pub struct SdlParts {
     pub video_subsystem: VideoSubsystem,
     pub event_pump: EventPump,
     pub window: Window,
+    pub window_maximized: bool,
     pub context: Sdl,
 }

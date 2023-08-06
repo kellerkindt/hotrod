@@ -1,7 +1,6 @@
+use crate::engine::system::vulkan::system::VulkanSystem;
 use crate::engine::system::vulkan::utils::pipeline::subpass_from_renderpass;
-use crate::engine::system::vulkan::{
-    DrawError, PipelineCreateError, ShaderLoadError, UploadError, VulkanSystem,
-};
+use crate::engine::system::vulkan::{DrawError, PipelineCreateError, ShaderLoadError, UploadError};
 use crate::shader_from_path;
 use bytemuck::{Pod, Zeroable};
 use std::collections::HashMap;
@@ -33,7 +32,7 @@ use vulkano::shader::EntryPoint;
 use vulkano::{Validated, VulkanError};
 
 #[derive()]
-pub struct VulkanTextureSystem {
+pub struct TexturesPipeline {
     pipeline: Arc<GraphicsPipeline>,
     desc_allocator: StandardDescriptorSetAllocator,
     memo_allocator: StandardMemoryAllocator,
@@ -44,7 +43,7 @@ pub struct VulkanTextureSystem {
     images: HashMap<TextureId, Arc<Image>>,
 }
 
-impl TryFrom<&VulkanSystem> for VulkanTextureSystem {
+impl TryFrom<&VulkanSystem> for TexturesPipeline {
     type Error = PipelineCreateError;
 
     fn try_from(vs: &VulkanSystem) -> Result<Self, Self::Error> {
@@ -56,7 +55,7 @@ impl TryFrom<&VulkanSystem> for VulkanTextureSystem {
     }
 }
 
-impl VulkanTextureSystem {
+impl TexturesPipeline {
     pub const REQUIRED_FEATURES: Features = Features {
         dynamic_rendering: true,
         ..Features::empty()

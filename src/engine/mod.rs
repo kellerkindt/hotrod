@@ -2,11 +2,11 @@ use crate::engine::builder::EngineBuilder;
 use crate::engine::parts::sdl::SdlParts;
 use crate::engine::system::canvas::buffered_layer::BufferedCanvasLayer;
 use crate::engine::system::vulkan::beautiful_lines::{
-    BeautifulLine, Vertex2d, VulkanBeautifulLineSystem,
+    BeautifulLine, BeautifulLinePipeline, Vertex2d,
 };
-use crate::engine::system::vulkan::lines::VulkanLineSystem;
-use crate::engine::system::vulkan::textures::{Textured, Vertex2dUv, VulkanTextureSystem};
-use crate::engine::system::vulkan::VulkanSystem;
+use crate::engine::system::vulkan::pipelines::VulkanPipelines;
+use crate::engine::system::vulkan::textures::{Textured, Vertex2dUv};
+use crate::engine::system::vulkan::DrawError;
 use crate::engine::types::world2d::{Dim, Pos};
 use image::GenericImageView;
 use sdl2::event::{Event, WindowEvent};
@@ -15,7 +15,9 @@ use sdl2::video::WindowBuildError;
 use std::io::Cursor;
 use std::ops::{Div, Mul};
 use std::sync::Arc;
-use std::time::{Instant, UNIX_EPOCH};
+use std::time::{Duration, Instant, UNIX_EPOCH};
+use system::vulkan::system::VulkanSystem;
+use vulkano::command_buffer::{AutoCommandBufferBuilder, PrimaryAutoCommandBuffer};
 use vulkano::instance::{Instance, InstanceExtensions};
 use vulkano::swapchain::{Surface, SurfaceApi};
 use vulkano::{Handle, LoadingError, Validated, VulkanError, VulkanLibrary, VulkanObject};
@@ -27,13 +29,11 @@ pub mod types;
 
 pub struct Engine {
     vulkan_system: VulkanSystem,
-    vulkan_lines: VulkanLineSystem,
-    vulkan_textures: VulkanTextureSystem,
-    vulkan_beautiful_lines: VulkanBeautifulLineSystem,
+    vulkan_pipelines: VulkanPipelines,
     #[cfg(feature = "ui-egui")]
-    egui_system: system::vulkan::egui::EguiSystem,
+    egui_system: system::egui::EguiSystem,
     #[cfg(feature = "ui-egui")]
-    egui_parts: parts::egui::EguiParts,
+    egui: parts::egui::EguiParts,
     // drop after the vulkan system! (last is fine, too)
     sdl: SdlParts,
 }
@@ -91,31 +91,22 @@ impl Engine {
             surface,
             builder.window_width,
             builder.window_height,
-            VulkanBeautifulLineSystem::REQUIRED_FEATURES,
+            BeautifulLinePipeline::REQUIRED_FEATURES,
         )?;
 
         Ok(Self {
+            vulkan_pipelines: VulkanPipelines::try_from(&vulkan_system)?,
             #[cfg(feature = "ui-egui")]
-            egui_system: system::vulkan::egui::EguiSystem::new(
-                Arc::clone(&vulkan_system.device()),
-                Arc::clone(&vulkan_system.queue()),
-                Arc::clone(&vulkan_system.render_pass()),
-                vulkan_system.pipeline_cache().map(Arc::clone),
-                builder.window_width as f32,
-                builder.window_height as f32,
-            )
-            .unwrap(),
+            egui_system: system::egui::EguiSystem::default(),
             #[cfg(feature = "ui-egui")]
-            egui_parts: parts::egui::EguiParts::default(),
-            vulkan_lines: VulkanLineSystem::try_from(&vulkan_system)?,
-            vulkan_textures: VulkanTextureSystem::try_from(&vulkan_system)?,
-            vulkan_beautiful_lines: VulkanBeautifulLineSystem::try_from(&vulkan_system)?,
+            egui: parts::egui::EguiParts::default(),
             vulkan_system,
             sdl: SdlParts {
                 video_subsystem,
                 event_pump,
                 // drop after the vulkan system!
                 window,
+                window_maximized: false,
                 context,
             },
         })
@@ -134,8 +125,69 @@ impl Engine {
         mut self,
         callback: Box<dyn FnMut(&egui::Context) + 'static>,
     ) -> Self {
-        self.egui_parts.content_callback = Some(callback.into());
+        self.egui.content_callback = Some(callback.into());
         self
+    }
+
+    #[cfg(feature = "ui-egui")]
+    pub fn update_egui(&mut self, f: impl FnOnce(&egui::Context)) {
+        let (width, height) = self.sdl.window.vulkan_drawable_size();
+        self.egui_system.update(width, height, f)
+    }
+
+    pub fn update<T>(&mut self, f: impl FnOnce(BeforeRenderContext) -> T) -> RenderResponse<T> {
+        let start = Instant::now();
+        let events = self.poll_events();
+        let (width, height) = self.sdl.window.vulkan_drawable_size();
+
+        let data = f(BeforeRenderContext {
+            engine: self,
+            events,
+            width,
+            height,
+            start,
+        });
+
+        RenderResponse {
+            data,
+            start,
+            duration: start.elapsed(),
+        }
+    }
+
+    fn poll_events(&mut self) -> Vec<Event> {
+        let mut events = Vec::new();
+        let mut allow_maximize_change = true;
+        for event in self.sdl.event_pump.poll_iter() {
+            #[cfg(feature = "ui-egui")]
+            self.egui_system.on_sdl2_event(&event);
+
+            match &event {
+                Event::Window {
+                    win_event: WindowEvent::Resized(..) | WindowEvent::SizeChanged(..),
+                    ..
+                } => {
+                    self.vulkan_system.recreatee_swapchain();
+                }
+                Event::KeyUp {
+                    keycode: Some(Keycode::F11),
+                    repeat: false,
+                    ..
+                } if allow_maximize_change => {
+                    self.sdl.window_maximized = !self.sdl.window_maximized;
+                    if self.sdl.window_maximized {
+                        self.sdl.window.restore();
+                    } else {
+                        self.sdl.window.maximize();
+                    }
+                    self.sdl.window.set_bordered(self.sdl.window_maximized);
+                    allow_maximize_change = false;
+                }
+                _ => {}
+            }
+            events.push(event);
+        }
+        events
     }
 
     pub fn run(mut self) -> Self {
@@ -145,59 +197,35 @@ impl Engine {
         ));
 
         let mut texture = None;
-        let mut maximized = false;
 
         'running: loop {
-            let mut allow_maximize_change = true;
             let time_start = Instant::now();
-            for event in self.sdl.event_pump.poll_iter() {
-                #[cfg(feature = "ui-egui")]
-                self.egui_system.on_sdl2_event(&event);
 
-                match event {
-                    Event::Quit { .. }
-                    | Event::KeyDown {
-                        keycode: Some(Keycode::Escape),
-                        ..
-                    } => {
-                        break 'running;
-                    }
-                    Event::Window {
-                        win_event: WindowEvent::Resized(..) | WindowEvent::SizeChanged(..),
-                        ..
-                    } => {
-                        self.vulkan_system.recreatee_swapchain();
-                    }
-                    Event::KeyUp {
-                        keycode: Some(Keycode::F11),
-                        repeat: false,
-                        ..
-                    } if allow_maximize_change => {
-                        maximized = !maximized;
-                        if maximized {
-                            self.sdl.window.restore();
-                        } else {
-                            self.sdl.window.maximize();
-                        }
-                        self.sdl.window.set_bordered(maximized);
-                        allow_maximize_change = false;
-                    }
-                    _ => {}
+            if self.poll_events().iter().any(|e| match e {
+                Event::Quit { .. } => true,
+                Event::KeyDown { keycode, .. } => {
+                    matches!(keycode, Some(Keycode::Escape))
                 }
+                _ => false,
+            }) {
+                break 'running;
             }
 
             let (width, height) = self.sdl.window.vulkan_drawable_size();
 
             #[cfg(feature = "ui-egui")]
-            if let Some(callback) = &mut self.egui_parts.content_callback {
-                self.egui_system.update_egui(width, height, |ctx| {
+            if let Some(callback) = &mut self.egui.content_callback {
+                self.egui_system.update(width, height, |ctx| {
                     callback(ctx);
                 });
             }
 
             let render_result = self.vulkan_system.render(width, height, |builder| {
                 #[cfg(feature = "ui-egui")]
-                self.egui_system.prepare_render(builder).unwrap();
+                self.vulkan_pipelines
+                    .egui
+                    .prepare(builder, &self.egui_system)
+                    .unwrap();
 
                 if texture.is_none() {
                     let image = image::io::Reader::new(Cursor::new(IMAGE_DATA))
@@ -207,7 +235,8 @@ impl Engine {
                         .unwrap();
 
                     texture = Some(
-                        self.vulkan_textures
+                        self.vulkan_pipelines
+                            .texture
                             .create_texture(
                                 builder,
                                 image
@@ -223,12 +252,17 @@ impl Engine {
 
                 |builder| {
                     #[cfg(feature = "ui-egui")]
-                    self.egui_system.render(builder).unwrap();
+                    self.vulkan_pipelines
+                        .egui
+                        .draw(builder, &self.egui_system)
+                        .unwrap();
 
                     let time = UNIX_EPOCH.elapsed().unwrap_or_default().subsec_millis() as f32
                         * std::f32::consts::PI.mul(2.0)
                         / 10.0;
-                    self.vulkan_beautiful_lines
+
+                    self.vulkan_pipelines
+                        .beautiful_line
                         .draw(
                             builder,
                             width as f32,
@@ -273,7 +307,8 @@ impl Engine {
                         )
                         .unwrap();
 
-                    self.vulkan_lines
+                    self.vulkan_pipelines
+                        .line
                         .draw(
                             builder,
                             width as f32,
@@ -315,14 +350,11 @@ impl Engine {
                         );
                     }
 
-                    layer.submit_to_render_pass(
-                        builder,
-                        &mut self.vulkan_lines,
-                        &mut self.vulkan_textures,
-                    );
+                    layer.submit_to_render_pass(builder, &mut self.vulkan_pipelines);
 
                     if let Some(texture) = texture {
-                        self.vulkan_textures
+                        self.vulkan_pipelines
+                            .texture
                             .draw(
                                 builder,
                                 width as f32,
@@ -402,4 +434,78 @@ pub enum Error {
     VulkanSystemError(#[from] system::vulkan::Error),
     #[error("Failed to create a Vulkan System Pipeline: {0}")]
     PipelineSystemCreateError(#[from] system::vulkan::PipelineCreateError),
+}
+
+pub struct BeforeRenderContext<'a> {
+    engine: &'a mut Engine,
+    pub events: Vec<Event>,
+    pub width: u32,
+    pub height: u32,
+    pub start: Instant,
+}
+
+impl<'a> BeforeRenderContext<'a> {
+    #[cfg(feature = "ui-egui")]
+    pub fn update_egui(&mut self, f: impl FnOnce(&egui::Context)) {
+        self.engine.egui_system.update(self.width, self.height, f)
+    }
+
+    pub fn render<F1, F2>(self, f1: F1) -> Result<(), DrawError>
+    where
+        F1: FnOnce(PrepareRenderContext) -> F2,
+        F2: FnOnce(RenderContext),
+    {
+        self.engine
+            .vulkan_system
+            .render(self.width, self.height, |commands| {
+                #[cfg(feature = "ui-egui")]
+                if let Err(e) = self
+                    .engine
+                    .vulkan_pipelines
+                    .egui
+                    .prepare(commands, &self.engine.egui_system)
+                {
+                    eprintln!("Failed to prepare rendering for egui: {e}");
+                    eprintln!("{e:?}");
+                }
+
+                let mut canvas = BufferedCanvasLayer::from([self.width, self.height]);
+                let f2 = f1(PrepareRenderContext { commands });
+
+                |commands| {
+                    f2(RenderContext {
+                        commands,
+                        canvas: &mut canvas,
+                    });
+
+                    canvas.submit_to_render_pass(commands, &mut self.engine.vulkan_pipelines);
+
+                    #[cfg(feature = "ui-egui")]
+                    if let Err(e) = self
+                        .engine
+                        .vulkan_pipelines
+                        .egui
+                        .draw(commands, &self.engine.egui_system)
+                    {
+                        eprintln!("Failed to render egui: {e}");
+                        eprintln!("{e:?}");
+                    }
+                }
+            })
+    }
+}
+
+pub struct PrepareRenderContext<'a> {
+    pub commands: &'a mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
+}
+
+pub struct RenderContext<'a> {
+    pub commands: &'a mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
+    pub canvas: &'a mut BufferedCanvasLayer,
+}
+
+pub struct RenderResponse<T> {
+    pub data: T,
+    pub start: Instant,
+    pub duration: Duration,
 }

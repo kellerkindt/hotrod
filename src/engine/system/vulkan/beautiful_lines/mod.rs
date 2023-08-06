@@ -1,7 +1,6 @@
+use crate::engine::system::vulkan::system::VulkanSystem;
 use crate::engine::system::vulkan::utils::pipeline::subpass_from_renderpass;
-use crate::engine::system::vulkan::{
-    DrawError, PipelineCreateError, ShaderLoadError, VulkanSystem,
-};
+use crate::engine::system::vulkan::{DrawError, PipelineCreateError, ShaderLoadError};
 use crate::shader_from_path;
 use bytemuck::{Pod, Zeroable};
 use std::sync::Arc;
@@ -25,12 +24,12 @@ use vulkano::render_pass::RenderPass;
 use vulkano::shader::EntryPoint;
 use vulkano::Validated;
 
-pub struct VulkanBeautifulLineSystem {
+pub struct BeautifulLinePipeline {
     pipeline: Arc<GraphicsPipeline>,
     memo_allocator: StandardMemoryAllocator,
 }
 
-impl TryFrom<&VulkanSystem> for VulkanBeautifulLineSystem {
+impl TryFrom<&VulkanSystem> for BeautifulLinePipeline {
     type Error = PipelineCreateError;
 
     fn try_from(vs: &VulkanSystem) -> Result<Self, Self::Error> {
@@ -42,7 +41,7 @@ impl TryFrom<&VulkanSystem> for VulkanBeautifulLineSystem {
     }
 }
 
-impl VulkanBeautifulLineSystem {
+impl BeautifulLinePipeline {
     pub const REQUIRED_FEATURES: Features = Features {
         dynamic_rendering: true,
         wide_lines: true,
