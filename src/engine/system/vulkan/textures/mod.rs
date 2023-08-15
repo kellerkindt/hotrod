@@ -188,6 +188,63 @@ impl TexturesPipeline {
         Ok(())
     }
 
+    pub fn draw_indexed<P>(
+        &mut self,
+        builder: &mut AutoCommandBufferBuilder<P>,
+        width: f32,
+        height: f32,
+        textured: &[TexturedIndexed],
+    ) -> Result<(), DrawError> {
+        builder.bind_pipeline_graphics(Arc::clone(&self.pipeline))?;
+
+        let mut offset_vertices = 0;
+        let mut offset_indices = 0;
+
+        let vertex_buffer = self.create_vertex_buffer(
+            textured
+                .iter()
+                .flat_map(|l| l.vertices.iter().copied())
+                .collect::<Vec<_>>(),
+        )?;
+
+        let index_buffer = self.create_index_buffer(
+            textured
+                .iter()
+                .flat_map(|l| l.indices.iter().flat_map(|i| i.into_iter()).copied())
+                .collect::<Vec<_>>(),
+        )?;
+
+        for textured in textured {
+            let vertices = vertex_buffer
+                .clone()
+                .slice(offset_vertices..(offset_vertices + textured.vertices.len() as u64));
+            offset_vertices += textured.vertices.len() as u64;
+
+            let index_count = textured.indices.len() * 3;
+            let indices = index_buffer
+                .clone()
+                .slice(offset_indices..(offset_indices + index_count as u64));
+            offset_indices += index_count as u64;
+
+            if let Some(texture) = self.textures.get(&textured.texture) {
+                builder
+                    .bind_index_buffer(indices)?
+                    .bind_vertex_buffers(0, vertices)?
+                    .bind_descriptor_sets(
+                        PipelineBindPoint::Graphics,
+                        Arc::clone(&self.pipeline.layout()),
+                        0,
+                        Arc::clone(texture),
+                    )?
+                    .push_constants(Arc::clone(&self.pipeline.layout()), 0, [width, height])?
+                    .draw_indexed(index_count as u32, 1, 0, 0, 0)?;
+            }
+        }
+
+        self.free_textures();
+        Ok(())
+    }
+
     fn free_textures(&mut self) {
         for texture in self.textures_to_free.drain(..) {
             self.textures.remove(&texture);
@@ -215,6 +272,29 @@ impl TexturesPipeline {
                 ..AllocationCreateInfo::default()
             },
             vertices,
+        )
+    }
+
+    fn create_index_buffer<I>(
+        &self,
+        indices: I,
+    ) -> Result<Subbuffer<[u32]>, Validated<BufferAllocateError>>
+    where
+        I: IntoIterator<Item = u32>,
+        I::IntoIter: ExactSizeIterator,
+    {
+        Buffer::from_iter(
+            &self.memo_allocator,
+            BufferCreateInfo {
+                usage: BufferUsage::INDEX_BUFFER,
+                ..BufferCreateInfo::default()
+            },
+            AllocationCreateInfo {
+                memory_type_filter: MemoryTypeFilter::PREFER_DEVICE
+                    | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
+                ..AllocationCreateInfo::default()
+            },
+            indices,
         )
     }
 
@@ -330,6 +410,12 @@ pub struct Vertex2dUv {
 
 pub struct Textured {
     pub vertices: Vec<Vertex2dUv>,
+    pub texture: TextureId,
+}
+
+pub struct TexturedIndexed {
+    pub vertices: Vec<Vertex2dUv>,
+    pub indices: Vec<[u32; 3]>,
     pub texture: TextureId,
 }
 
