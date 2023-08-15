@@ -153,8 +153,6 @@ impl TexturesPipeline {
         height: f32,
         textured: &[Textured],
     ) -> Result<(), DrawError> {
-        builder.bind_pipeline_graphics(Arc::clone(&self.pipeline))?;
-
         let mut offset = 0;
         let vertex_buffer = self.create_vertex_buffer(
             textured
@@ -163,25 +161,24 @@ impl TexturesPipeline {
                 .collect::<Vec<_>>(),
         )?;
 
+        builder
+            .bind_pipeline_graphics(Arc::clone(&self.pipeline))?
+            .bind_vertex_buffers(0, vertex_buffer)?
+            .push_constants(Arc::clone(&self.pipeline.layout()), 0, [width, height])?;
+
         for textured in textured {
-            let vertices = vertex_buffer
-                .clone()
-                .slice(offset..(offset + textured.vertices.len() as u64));
-
-            offset += textured.vertices.len() as u64;
-
             if let Some(texture) = self.textures.get(&textured.texture) {
                 builder
-                    .bind_vertex_buffers(0, vertices)?
                     .bind_descriptor_sets(
                         PipelineBindPoint::Graphics,
                         Arc::clone(&self.pipeline.layout()),
                         0,
                         Arc::clone(texture),
                     )?
-                    .push_constants(Arc::clone(&self.pipeline.layout()), 0, [width, height])?
-                    .draw(textured.vertices.len() as u32, 1, 0, 0)?;
+                    .draw(textured.vertices.len() as u32, 1, offset, 0)?;
             }
+
+            offset += textured.vertices.len() as u32;
         }
 
         self.free_textures();
@@ -195,8 +192,6 @@ impl TexturesPipeline {
         height: f32,
         textured: &[TexturedIndexed],
     ) -> Result<(), DrawError> {
-        builder.bind_pipeline_graphics(Arc::clone(&self.pipeline))?;
-
         let mut offset_vertices = 0;
         let mut offset_indices = 0;
 
@@ -214,31 +209,28 @@ impl TexturesPipeline {
                 .collect::<Vec<_>>(),
         )?;
 
-        for textured in textured {
-            let vertices = vertex_buffer
-                .clone()
-                .slice(offset_vertices..(offset_vertices + textured.vertices.len() as u64));
-            offset_vertices += textured.vertices.len() as u64;
+        builder
+            .bind_pipeline_graphics(Arc::clone(&self.pipeline))?
+            .bind_index_buffer(index_buffer)?
+            .bind_vertex_buffers(0, vertex_buffer)?
+            .push_constants(Arc::clone(&self.pipeline.layout()), 0, [width, height])?;
 
-            let index_count = textured.indices.len() * 3;
-            let indices = index_buffer
-                .clone()
-                .slice(offset_indices..(offset_indices + index_count as u64));
-            offset_indices += index_count as u64;
+        for textured in textured {
+            let index_count = textured.indices.len() as u32 * 3;
 
             if let Some(texture) = self.textures.get(&textured.texture) {
                 builder
-                    .bind_index_buffer(indices)?
-                    .bind_vertex_buffers(0, vertices)?
                     .bind_descriptor_sets(
                         PipelineBindPoint::Graphics,
                         Arc::clone(&self.pipeline.layout()),
                         0,
                         Arc::clone(texture),
                     )?
-                    .push_constants(Arc::clone(&self.pipeline.layout()), 0, [width, height])?
-                    .draw_indexed(index_count as u32, 1, 0, 0, 0)?;
+                    .draw_indexed(index_count, 1, offset_indices, offset_vertices, 0)?;
             }
+
+            offset_vertices += textured.vertices.len() as i32;
+            offset_indices += index_count;
         }
 
         self.free_textures();

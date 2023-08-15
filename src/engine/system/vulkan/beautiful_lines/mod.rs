@@ -14,7 +14,7 @@ use vulkano::pipeline::graphics::input_assembly::{InputAssemblyState, PrimitiveT
 use vulkano::pipeline::graphics::multisample::MultisampleState;
 use vulkano::pipeline::graphics::rasterization::{CullMode, RasterizationState};
 use vulkano::pipeline::graphics::vertex_input::{Vertex, VertexDefinition};
-use vulkano::pipeline::graphics::viewport::{Scissor, ViewportState};
+use vulkano::pipeline::graphics::viewport::ViewportState;
 use vulkano::pipeline::graphics::GraphicsPipelineCreateInfo;
 use vulkano::pipeline::layout::PipelineDescriptorSetLayoutCreateInfo;
 use vulkano::pipeline::{
@@ -88,7 +88,7 @@ impl BeautifulLinePipeline {
                 input_assembly_state: Some(
                     InputAssemblyState::default().topology(PrimitiveTopology::LineStrip),
                 ),
-                viewport_state: Some(ViewportState::viewport_dynamic_scissor_dynamic(1)),
+                viewport_state: Some(ViewportState::viewport_dynamic_scissor_irrelevant()),
                 rasterization_state: Some(RasterizationState {
                     cull_mode: StateMode::Fixed(CullMode::None),
                     line_width: StateMode::Dynamic,
@@ -130,9 +130,8 @@ impl BeautifulLinePipeline {
         height: f32,
         lines: &[BeautifulLine],
     ) -> Result<(), DrawError> {
-        builder.bind_pipeline_graphics(Arc::clone(&self.pipeline))?;
-
         let mut offset = 0;
+
         let vertex_buffer = self.create_vertex_buffer(
             lines
                 .iter()
@@ -140,33 +139,21 @@ impl BeautifulLinePipeline {
                 .collect::<Vec<_>>(),
         )?;
 
+        builder
+            .bind_pipeline_graphics(Arc::clone(&self.pipeline))?
+            .bind_vertex_buffers(0, vertex_buffer)?;
+
         for line in lines {
-            let mut scissor = Scissor::irrelevant();
-            for v in &line.vertices {
-                scissor.offset[0] = scissor.offset[0].min(v.pos[0] as u32);
-                scissor.offset[1] = scissor.offset[1].min(v.pos[1] as u32);
-                scissor.extent[0] = scissor.extent[0].max(v.pos[0] as u32);
-                scissor.extent[1] = scissor.extent[1].max(v.pos[1] as u32);
-            }
-            scissor.extent[0] -= scissor.offset[0];
-            scissor.extent[1] -= scissor.offset[1];
-
-            let vertices = vertex_buffer
-                .clone()
-                .slice(offset..(offset + line.vertices.len() as u64));
-
-            offset += line.vertices.len() as u64;
-
             builder
                 .set_line_width(line.width)?
-                .set_scissor(0, [scissor].into_iter().collect())?
-                .bind_vertex_buffers(0, vertices)?
                 .push_constants(
                     Arc::clone(&self.pipeline.layout()),
                     0,
                     [width, height, line.width],
                 )?
-                .draw(line.vertices.len() as u32, 1, 0, 0)?;
+                .draw(line.vertices.len() as u32, 1, offset, 0)?;
+
+            offset += line.vertices.len() as u32;
         }
 
         Ok(())

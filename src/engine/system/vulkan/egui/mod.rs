@@ -172,10 +172,6 @@ impl EguiPipeline {
         height: f32,
         clipped_primitives: &[ClippedPrimitive],
     ) -> Result<(), DrawError> {
-        builder
-            //.next_subpass(SubpassContents::Inline)?
-            .bind_pipeline_graphics(Arc::clone(&self.pipeline))?;
-
         let mut vertices = Vec::<AdapterVertex>::with_capacity(clipped_primitives.len() * 4);
         let mut indices = Vec::<u32>::with_capacity(clipped_primitives.len() * 6);
         let mut clip_rects = Vec::<Rect>::with_capacity(clipped_primitives.len());
@@ -211,19 +207,19 @@ impl EguiPipeline {
         offsets.push((vertices.len(), indices.len()));
 
         let (vertex_buffer, index_buffer) = self.create_buffers(vertices, indices)?;
-        for (index, rect) in clip_rects.into_iter().enumerate() {
-            let offset = offsets[index];
-            let offset_end = offsets[index + 1];
 
-            let vertices = vertex_buffer
-                .clone()
-                .slice(offset.0 as u64..offset_end.0 as u64);
-            let indices = index_buffer
-                .clone()
-                .slice(offset.1 as u64..offset_end.1 as u64);
+        builder
+            //.next_subpass(SubpassContents::Inline)?
+            .bind_pipeline_graphics(Arc::clone(&self.pipeline))?
+            .bind_index_buffer(index_buffer)?
+            .bind_vertex_buffers(0, vertex_buffer)?
+            .push_constants(Arc::clone(&self.pipeline.layout()), 0, [width, height])?;
+
+        for (index, rect) in clip_rects.into_iter().enumerate() {
+            let (offset_vertex, offset_index) = offsets[index];
+            let (_offset_vertex_end, offset_index_end) = offsets[index + 1];
 
             if let Some(texture) = self.textures.get(&texture_ids[index]) {
-                let index_count = indices.len() as u32;
                 builder
                     .set_scissor(
                         0,
@@ -234,16 +230,19 @@ impl EguiPipeline {
                         .into_iter()
                         .collect(),
                     )?
-                    .bind_vertex_buffers(0, vertices)?
-                    .bind_index_buffer(indices)?
                     .bind_descriptor_sets(
                         PipelineBindPoint::Graphics,
                         Arc::clone(&self.pipeline.layout()),
                         0,
                         Arc::clone(texture),
                     )?
-                    .push_constants(Arc::clone(&self.pipeline.layout()), 0, [width, height])?
-                    .draw_indexed(index_count, 1, 0, 0, 0)?;
+                    .draw_indexed(
+                        (offset_index_end - offset_index) as u32,
+                        1,
+                        offset_index as u32,
+                        offset_vertex as i32,
+                        0,
+                    )?;
             }
         }
 

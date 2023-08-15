@@ -121,8 +121,6 @@ impl LinePipeline {
         height: f32,
         lines: &[Line],
     ) -> Result<(), DrawError> {
-        builder.bind_pipeline_graphics(Arc::clone(&self.pipeline))?;
-
         let mut offset = 0;
         let vertex_buffer = self.create_vertex_buffer(
             lines
@@ -131,30 +129,27 @@ impl LinePipeline {
                 .collect::<Vec<_>>(),
         )?;
 
+        builder
+            .bind_pipeline_graphics(Arc::clone(&self.pipeline))?
+            .bind_vertex_buffers(0, vertex_buffer)?;
+
         for line in lines {
-            let vertices = vertex_buffer
-                .clone()
-                .slice(offset..(offset + line.vertices.len() as u64));
-
-            offset += line.vertices.len() as u64;
-
             builder
-                .bind_vertex_buffers(0, vertices)?
                 .push_constants(
                     Arc::clone(&self.pipeline.layout()),
                     0,
                     [
-                        width,
-                        height,
-                        0.0, // padding ... I guess?
-                        0.0, // padding ... I guess?
                         line.color[0],
                         line.color[1],
                         line.color[2],
                         line.color[3],
+                        width,
+                        height,
                     ],
                 )?
-                .draw(line.vertices.len() as u32, 1, 0, 0)?;
+                .draw(line.vertices.len() as u32, 1, offset, 0)?;
+
+            offset += line.vertices.len() as u32;
         }
 
         Ok(())
