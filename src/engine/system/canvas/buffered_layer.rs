@@ -46,7 +46,6 @@ impl BufferedCanvasLayer {
         ])
     }
 
-    #[inline]
     pub fn fill_rect<P: Into<Pos<f32>>, D: Into<Dim<f32>>>(&mut self, pos: P, dim: D) {
         let pos = pos.into();
         let dim = dim.into();
