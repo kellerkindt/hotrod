@@ -4,8 +4,10 @@ use crate::engine::system::vulkan::utils::pipeline::subpass_from_renderpass;
 use crate::engine::system::vulkan::{DrawError, PipelineCreateError, ShaderLoadError, UploadError};
 use crate::shader_from_path;
 use bytemuck::{Pod, Zeroable};
-use egui::epaint::ahash::HashMap;
 use egui::{ClippedPrimitive, Color32, ImageData, Rect, TextureId, TexturesDelta};
+use nohash_hasher::NoHashHasher;
+use std::collections::HashMap;
+use std::hash::BuildHasherDefault;
 use std::sync::Arc;
 use vulkano::buffer::{Buffer, BufferAllocateError, BufferCreateInfo, BufferUsage, Subbuffer};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, CopyBufferToImageInfo};
@@ -39,9 +41,10 @@ pub struct EguiPipeline {
     pub queue: Arc<Queue>,
     pub pipeline: Arc<GraphicsPipeline>,
     pub texture_sampler: Arc<Sampler>,
-    pub textures: HashMap<TextureId, Arc<PersistentDescriptorSet>>,
+    pub textures:
+        HashMap<TextureId, Arc<PersistentDescriptorSet>, BuildHasherDefault<NoHashHasher<u64>>>,
     pub textures_to_free: Vec<TextureId>,
-    pub images: HashMap<TextureId, Arc<Image>>,
+    pub images: HashMap<TextureId, Arc<Image>, BuildHasherDefault<NoHashHasher<u64>>>,
     pub desc_allocator: StandardDescriptorSetAllocator,
     pub memo_allocator: StandardMemoryAllocator,
 }

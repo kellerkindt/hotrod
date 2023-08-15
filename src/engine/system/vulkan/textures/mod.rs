@@ -3,7 +3,9 @@ use crate::engine::system::vulkan::utils::pipeline::subpass_from_renderpass;
 use crate::engine::system::vulkan::{DrawError, PipelineCreateError, ShaderLoadError, UploadError};
 use crate::shader_from_path;
 use bytemuck::{Pod, Zeroable};
+use nohash_hasher::NoHashHasher;
 use std::collections::HashMap;
+use std::hash::BuildHasherDefault;
 use std::sync::Arc;
 use vulkano::buffer::{Buffer, BufferAllocateError, BufferCreateInfo, BufferUsage, Subbuffer};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, CopyBufferToImageInfo};
@@ -38,9 +40,10 @@ pub struct TexturesPipeline {
     memo_allocator: StandardMemoryAllocator,
     texture_id_gen: usize,
     texture_sampler: Arc<Sampler>,
-    textures: HashMap<TextureId, Arc<PersistentDescriptorSet>>,
+    textures:
+        HashMap<TextureId, Arc<PersistentDescriptorSet>, BuildHasherDefault<NoHashHasher<usize>>>,
     textures_to_free: Vec<TextureId>,
-    images: HashMap<TextureId, Arc<Image>>,
+    images: HashMap<TextureId, Arc<Image>, BuildHasherDefault<NoHashHasher<usize>>>,
 }
 
 impl TryFrom<&VulkanSystem> for TexturesPipeline {
