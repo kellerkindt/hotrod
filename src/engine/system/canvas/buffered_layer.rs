@@ -1,6 +1,7 @@
 use crate::engine::system::vulkan::lines::{Line, Vertex2d};
 use crate::engine::system::vulkan::pipelines::VulkanPipelines;
 use crate::engine::system::vulkan::textures::{TextureId, Textured, Vertex2dUv};
+use crate::engine::system::vulkan::triangles::Triangles;
 use crate::engine::types::world2d::{Dim, Pos};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, PrimaryAutoCommandBuffer};
 
@@ -43,6 +44,31 @@ impl BufferedCanvasLayer {
             pos + Dim::new(0.0, dim.y),
             pos,
         ])
+    }
+
+    #[inline]
+    pub fn fill_rect<P: Into<Pos<f32>>, D: Into<Dim<f32>>>(&mut self, pos: P, dim: D) {
+        let pos = pos.into();
+        let dim = dim.into();
+        let triangle = Triangles {
+            vertices: [
+                pos,
+                pos + Dim::new(dim.x, 0.0),
+                pos + dim,
+                pos + dim,
+                pos + Dim::new(0.0, dim.y),
+                pos,
+            ]
+            .into_iter()
+            .map(|pos| crate::engine::system::vulkan::triangles::Vertex2d { pos: pos.into() })
+            .collect::<Vec<_>>(),
+            color: self.color,
+        };
+        if let Some(Action::Triangles(triangles)) = self.actions.last_mut() {
+            triangles.push(triangle);
+        } else {
+            self.actions.push(Action::Triangles(vec![triangle]));
+        }
     }
 
     pub fn draw_path<P: Into<Pos<f32>> + Copy>(&mut self, positions: &[P]) {
@@ -127,6 +153,16 @@ impl BufferedCanvasLayer {
                         eprintln!("{e:?}");
                     }
                 }
+                Action::Triangles(triangles) => {
+                    if let Err(e) = pipeline.triangles.draw(
+                        cmd,
+                        self.size[0] as f32,
+                        self.size[1] as f32,
+                        &triangles,
+                    ) {
+                        eprintln!("{e:?}");
+                    }
+                }
                 Action::TexturedTriangle(textured) => {
                     if let Err(e) = pipeline.texture.draw(
                         cmd,
@@ -144,5 +180,6 @@ impl BufferedCanvasLayer {
 
 enum Action {
     Lines(Vec<Line>),
+    Triangles(Vec<Triangles>),
     TexturedTriangle(Vec<Textured>),
 }
