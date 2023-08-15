@@ -12,6 +12,7 @@ pub mod lines;
 pub mod pipelines;
 pub mod system;
 pub mod textures;
+pub mod triangles;
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
