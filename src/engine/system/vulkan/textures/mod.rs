@@ -1,11 +1,10 @@
-use crate::engine::system::vulkan::system::VulkanSystem;
-use crate::engine::system::vulkan::utils::pipeline::subpass_from_renderpass;
+use crate::engine::system::vulkan::system::{VulkanSystem, WriteDescriptorSetCollection};
+use crate::engine::system::vulkan::utils::pipeline::{
+    subpass_from_renderpass, write_descriptor_sets_from_collection,
+};
 use crate::engine::system::vulkan::{DrawError, PipelineCreateError, ShaderLoadError, UploadError};
 use crate::shader_from_path;
 use bytemuck::{Pod, Zeroable};
-use nohash_hasher::NoHashHasher;
-use std::collections::HashMap;
-use std::hash::BuildHasherDefault;
 use std::sync::Arc;
 use vulkano::buffer::{Buffer, BufferAllocateError, BufferCreateInfo, BufferUsage, Subbuffer};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, CopyBufferToImageInfo};
@@ -38,12 +37,9 @@ pub struct TexturesPipeline {
     pipeline: Arc<GraphicsPipeline>,
     desc_allocator: StandardDescriptorSetAllocator,
     memo_allocator: StandardMemoryAllocator,
-    texture_id_gen: usize,
     texture_sampler: Arc<Sampler>,
-    textures:
-        HashMap<TextureId, Arc<PersistentDescriptorSet>, BuildHasherDefault<NoHashHasher<usize>>>,
-    textures_to_free: Vec<TextureId>,
-    images: HashMap<TextureId, Arc<Image>, BuildHasherDefault<NoHashHasher<usize>>>,
+    origin_marker: Arc<()>,
+    write_descriptors: WriteDescriptorSetCollection,
 }
 
 impl TryFrom<&VulkanSystem> for TexturesPipeline {
@@ -54,6 +50,7 @@ impl TryFrom<&VulkanSystem> for TexturesPipeline {
             Arc::clone(vs.device()),
             Arc::clone(vs.render_pass()),
             vs.pipeline_cache().map(Arc::clone),
+            vs.get_write_descriptor_sets().clone(),
         )
     }
 }
@@ -68,16 +65,15 @@ impl TexturesPipeline {
         device: Arc<Device>,
         render_pass: Arc<RenderPass>,
         cache: Option<Arc<PipelineCache>>,
+        write_descriptors: WriteDescriptorSetCollection,
     ) -> Result<Self, PipelineCreateError> {
         Ok(Self {
             pipeline: Self::create_pipeline(Arc::clone(&device), render_pass, cache)?,
             desc_allocator: StandardDescriptorSetAllocator::new(Arc::clone(&device)),
             memo_allocator: StandardMemoryAllocator::new_default(Arc::clone(&device)),
-            texture_id_gen: 0,
             texture_sampler: Self::create_texture_sampler(device)?,
-            textures: HashMap::default(),
-            textures_to_free: Vec::default(),
-            images: Default::default(),
+            origin_marker: Arc::new(()),
+            write_descriptors,
         })
     }
 
@@ -150,10 +146,8 @@ impl TexturesPipeline {
     }
 
     pub fn draw<P>(
-        &mut self,
+        &self,
         builder: &mut AutoCommandBufferBuilder<P>,
-        width: f32,
-        height: f32,
         textured: &[Textured],
     ) -> Result<(), DrawError> {
         let mut offset = 0;
@@ -166,17 +160,16 @@ impl TexturesPipeline {
 
         builder
             .bind_pipeline_graphics(Arc::clone(&self.pipeline))?
-            .bind_vertex_buffers(0, vertex_buffer)?
-            .push_constants(Arc::clone(&self.pipeline.layout()), 0, [width, height])?;
+            .bind_vertex_buffers(0, vertex_buffer)?;
 
         for textured in textured {
-            if let Some(texture) = self.textures.get(&textured.texture) {
+            if Arc::ptr_eq(&self.origin_marker, &textured.texture.0.origin) {
                 builder
                     .bind_descriptor_sets(
                         PipelineBindPoint::Graphics,
                         Arc::clone(&self.pipeline.layout()),
                         0,
-                        Arc::clone(texture),
+                        Arc::clone(&textured.texture.0.descriptor),
                     )?
                     .draw(textured.vertices.len() as u32, 1, offset, 0)?;
             }
@@ -184,15 +177,12 @@ impl TexturesPipeline {
             offset += textured.vertices.len() as u32;
         }
 
-        self.free_textures();
         Ok(())
     }
 
     pub fn draw_indexed<P>(
-        &mut self,
+        &self,
         builder: &mut AutoCommandBufferBuilder<P>,
-        width: f32,
-        height: f32,
         textured: &[TexturedIndexed],
     ) -> Result<(), DrawError> {
         let mut offset_vertices = 0;
@@ -215,19 +205,18 @@ impl TexturesPipeline {
         builder
             .bind_pipeline_graphics(Arc::clone(&self.pipeline))?
             .bind_index_buffer(index_buffer)?
-            .bind_vertex_buffers(0, vertex_buffer)?
-            .push_constants(Arc::clone(&self.pipeline.layout()), 0, [width, height])?;
+            .bind_vertex_buffers(0, vertex_buffer)?;
 
         for textured in textured {
             let index_count = textured.indices.len() as u32 * 3;
 
-            if let Some(texture) = self.textures.get(&textured.texture) {
+            if Arc::ptr_eq(&self.origin_marker, &textured.texture.0.origin) {
                 builder
                     .bind_descriptor_sets(
                         PipelineBindPoint::Graphics,
                         Arc::clone(&self.pipeline.layout()),
                         0,
-                        Arc::clone(texture),
+                        Arc::clone(&textured.texture.0.descriptor),
                     )?
                     .draw_indexed(index_count, 1, offset_indices, offset_vertices, 0)?;
             }
@@ -236,15 +225,7 @@ impl TexturesPipeline {
             offset_indices += index_count;
         }
 
-        self.free_textures();
         Ok(())
-    }
-
-    fn free_textures(&mut self) {
-        for texture in self.textures_to_free.drain(..) {
-            self.textures.remove(&texture);
-            self.images.remove(&texture);
-        }
     }
 
     fn create_vertex_buffer<I>(
@@ -294,26 +275,19 @@ impl TexturesPipeline {
     }
 
     pub fn create_texture<P>(
-        &mut self,
+        &self,
         builder: &mut AutoCommandBufferBuilder<P>,
         rgba: Vec<u8>,
         width: u32,
         height: u32,
     ) -> Result<TextureId, UploadError> {
-        let (image, desc) = self.create_image_desc(width, height)?;
+        let (image, descriptor) = self.create_image_desc(width, height)?;
         self.upload_image(builder, Arc::clone(&image), rgba)?;
-
-        let texture_id = self.next_texture_id();
-        self.textures.insert(texture_id, Arc::clone(&desc));
-        self.images.insert(texture_id, image);
-
-        Ok(texture_id)
-    }
-
-    fn next_texture_id(&mut self) -> TextureId {
-        let texture_id = TextureId(self.texture_id_gen);
-        self.texture_id_gen += 1;
-        texture_id
+        Ok(TextureId(Arc::new(TextureInner {
+            origin: Arc::clone(&self.origin_marker),
+            _image: image,
+            descriptor,
+        })))
     }
 
     fn create_image_desc(
@@ -331,7 +305,12 @@ impl TexturesPipeline {
                 0,
                 ImageView::new_default(Arc::clone(&image))?,
                 Arc::clone(&self.texture_sampler),
-            )],
+            )]
+            .into_iter()
+            .chain(write_descriptor_sets_from_collection(
+                layout,
+                &self.write_descriptors,
+            )),
             [],
         ) {
             Ok(desc) => Ok((image, desc)),
@@ -361,7 +340,7 @@ impl TexturesPipeline {
     }
 
     fn upload_image<P, I>(
-        &mut self,
+        &self,
         builder: &mut AutoCommandBufferBuilder<P>,
         image: Arc<Image>,
         rgba: I,
@@ -388,10 +367,6 @@ impl TexturesPipeline {
         ))?;
         Ok(())
     }
-
-    pub fn destroy_texture(&mut self, texture: TextureId) {
-        self.textures_to_free.push(texture);
-    }
 }
 
 #[repr(C)]
@@ -414,5 +389,11 @@ pub struct TexturedIndexed {
     pub texture: TextureId,
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
-pub struct TextureId(usize);
+#[derive(Clone)]
+pub struct TextureId(Arc<TextureInner>);
+
+pub struct TextureInner {
+    origin: Arc<()>,
+    _image: Arc<Image>,
+    descriptor: Arc<PersistentDescriptorSet>,
+}

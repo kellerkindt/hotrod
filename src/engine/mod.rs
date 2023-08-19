@@ -1,6 +1,5 @@
 use crate::engine::builder::EngineBuilder;
 use crate::engine::parts::sdl::SdlParts;
-use crate::engine::system::canvas::buffered_layer::BufferedCanvasLayer;
 use crate::engine::system::vulkan::beautiful_lines::BeautifulLinePipeline;
 use crate::engine::system::vulkan::pipelines::VulkanPipelines;
 use crate::engine::system::vulkan::DrawError;
@@ -10,7 +9,9 @@ use sdl2::video::WindowBuildError;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use system::vulkan::system::VulkanSystem;
-use vulkano::command_buffer::{AutoCommandBufferBuilder, PrimaryAutoCommandBuffer};
+use vulkano::command_buffer::{
+    AutoCommandBufferBuilder, PrimaryAutoCommandBuffer, SecondaryAutoCommandBuffer,
+};
 use vulkano::instance::{Instance, InstanceExtensions};
 use vulkano::swapchain::{Surface, SurfaceApi};
 use vulkano::{Handle, LoadingError, Validated, VulkanError, VulkanLibrary, VulkanObject};
@@ -22,7 +23,7 @@ pub mod types;
 
 pub struct Engine {
     vulkan_system: VulkanSystem,
-    vulkan_pipelines: VulkanPipelines,
+    vulkan_pipelines: Arc<VulkanPipelines>,
     #[cfg(feature = "ui-egui")]
     egui_system: system::egui::EguiSystem,
     #[cfg(feature = "ui-egui")]
@@ -87,7 +88,7 @@ impl Engine {
         )?;
 
         Ok(Self {
-            vulkan_pipelines: VulkanPipelines::try_from(&vulkan_system)?,
+            vulkan_pipelines: Arc::new(VulkanPipelines::try_from(&vulkan_system)?),
             #[cfg(feature = "ui-egui")]
             egui_system: system::egui::EguiSystem::default(),
             vulkan_system,
@@ -204,7 +205,7 @@ impl<'a> BeforeRenderContext<'a> {
     pub fn render<F1, F2>(self, f1: F1) -> Result<(), DrawError>
     where
         F1: FnOnce(PrepareRenderContext) -> F2,
-        F2: FnOnce(RenderContext),
+        F2: FnOnce(RenderContext) -> Vec<Arc<SecondaryAutoCommandBuffer>>,
     {
         self.engine
             .vulkan_system
@@ -220,35 +221,55 @@ impl<'a> BeforeRenderContext<'a> {
                     eprintln!("{e:?}");
                 }
 
-                let mut canvas = BufferedCanvasLayer::from([self.width, self.height]);
                 let f2 = f1(PrepareRenderContext {
                     commands,
-                    pipelines: &mut self.engine.vulkan_pipelines,
+                    pipelines: &self.engine.vulkan_pipelines,
                     width: self.width,
                     height: self.height,
                 });
 
-                |commands| {
-                    f2(RenderContext {
-                        commands,
-                        pipelines: &mut self.engine.vulkan_pipelines,
-                        canvas: &mut canvas,
-                        width: self.width,
-                        height: self.height,
+                |render_context| {
+                    let mut commands = Vec::default();
+
+                    std::thread::scope(|scope| {
+                        #[cfg(feature = "ui-egui")]
+                        let egui = {
+                            scope.spawn(|| {
+                                let mut commands =
+                                    render_context.create_command_buffer_builder().unwrap();
+                                if let Err(e) = self
+                                    .engine
+                                    .vulkan_pipelines
+                                    .egui
+                                    .draw(&mut commands, &self.engine.egui_system)
+                                {
+                                    eprintln!("Failed to render egui: {e}");
+                                    eprintln!("{e:?}");
+                                }
+
+                                commands.build().unwrap()
+                            })
+                        };
+
+                        commands.extend(f2(RenderContext {
+                            inner: render_context,
+                            pipelines: &self.engine.vulkan_pipelines,
+                            width: self.width,
+                            height: self.height,
+                        }));
+
+                        #[cfg(feature = "ui-egui")]
+                        match egui.join() {
+                            Ok(egui) => {
+                                commands.push(egui);
+                            }
+                            Err(e) => {
+                                eprintln!("Failed to collect egui commands: {e:?}")
+                            }
+                        }
                     });
 
-                    canvas.submit_to_render_pass(commands, &mut self.engine.vulkan_pipelines);
-
-                    #[cfg(feature = "ui-egui")]
-                    if let Err(e) = self
-                        .engine
-                        .vulkan_pipelines
-                        .egui
-                        .draw(commands, &self.engine.egui_system)
-                    {
-                        eprintln!("Failed to render egui: {e}");
-                        eprintln!("{e:?}");
-                    }
+                    commands
                 }
             })
     }
@@ -256,15 +277,14 @@ impl<'a> BeforeRenderContext<'a> {
 
 pub struct PrepareRenderContext<'a> {
     pub commands: &'a mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
-    pub pipelines: &'a mut VulkanPipelines,
+    pub pipelines: &'a Arc<VulkanPipelines>,
     pub width: u32,
     pub height: u32,
 }
 
-pub struct RenderContext<'a> {
-    pub commands: &'a mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
-    pub pipelines: &'a mut VulkanPipelines,
-    pub canvas: &'a mut BufferedCanvasLayer,
+pub struct RenderContext<'a, 'b> {
+    pub inner: &'a system::vulkan::system::RenderContext<'b>,
+    pub pipelines: &'a Arc<VulkanPipelines>,
     pub width: u32,
     pub height: u32,
 }

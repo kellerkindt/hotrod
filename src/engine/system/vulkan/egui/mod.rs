@@ -8,7 +8,8 @@ use egui::{ClippedPrimitive, Color32, ImageData, Rect, TextureId, TexturesDelta}
 use nohash_hasher::NoHashHasher;
 use std::collections::HashMap;
 use std::hash::BuildHasherDefault;
-use std::sync::Arc;
+use std::ops::DerefMut;
+use std::sync::{Arc, RwLock};
 use vulkano::buffer::{Buffer, BufferAllocateError, BufferCreateInfo, BufferUsage, Subbuffer};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, CopyBufferToImageInfo};
 use vulkano::descriptor_set::allocator::StandardDescriptorSetAllocator;
@@ -37,16 +38,20 @@ use vulkano::{Validated, VulkanError};
 
 use crate::ui::egui::epaint::{ImageDelta, Primitive};
 
-pub struct EguiPipeline {
-    pub queue: Arc<Queue>,
-    pub pipeline: Arc<GraphicsPipeline>,
-    pub texture_sampler: Arc<Sampler>,
+struct Inner {
     pub textures:
         HashMap<TextureId, Arc<PersistentDescriptorSet>, BuildHasherDefault<NoHashHasher<u64>>>,
     pub textures_to_free: Vec<TextureId>,
     pub images: HashMap<TextureId, Arc<Image>, BuildHasherDefault<NoHashHasher<u64>>>,
+}
+
+pub struct EguiPipeline {
+    pub queue: Arc<Queue>,
+    pub pipeline: Arc<GraphicsPipeline>,
+    pub texture_sampler: Arc<Sampler>,
     pub desc_allocator: StandardDescriptorSetAllocator,
     pub memo_allocator: StandardMemoryAllocator,
+    inner: RwLock<Inner>,
 }
 
 impl TryFrom<&VulkanSystem> for EguiPipeline {
@@ -75,9 +80,11 @@ impl EguiPipeline {
             memo_allocator: StandardMemoryAllocator::new_default(Arc::clone(&device)),
             pipeline: Self::create_pipeline(Arc::clone(&device), render_pass, cache)?,
             texture_sampler: Self::create_texture_sampler(device)?,
-            textures: HashMap::default(),
-            textures_to_free: Vec::default(),
-            images: HashMap::default(),
+            inner: RwLock::new(Inner {
+                textures: HashMap::default(),
+                textures_to_free: Vec::default(),
+                images: HashMap::default(),
+            }),
         })
     }
 
@@ -152,7 +159,7 @@ impl EguiPipeline {
 
     #[inline]
     pub fn prepare<P>(
-        &mut self,
+        &self,
         builder: &mut AutoCommandBufferBuilder<P>,
         egui: &EguiSystem,
     ) -> Result<(), UploadError> {
@@ -161,7 +168,7 @@ impl EguiPipeline {
 
     #[inline]
     pub fn draw<P>(
-        &mut self,
+        &self,
         builder: &mut AutoCommandBufferBuilder<P>,
         egui: &EguiSystem,
     ) -> Result<(), DrawError> {
@@ -169,7 +176,7 @@ impl EguiPipeline {
     }
 
     fn draw_internal<P>(
-        &mut self,
+        &self,
         builder: &mut AutoCommandBufferBuilder<P>,
         width: f32,
         height: f32,
@@ -218,11 +225,12 @@ impl EguiPipeline {
             .bind_vertex_buffers(0, vertex_buffer)?
             .push_constants(Arc::clone(&self.pipeline.layout()), 0, [width, height])?;
 
+        let inner = self.inner.read().unwrap();
         for (index, rect) in clip_rects.into_iter().enumerate() {
             let (offset_vertex, offset_index) = offsets[index];
             let (_offset_vertex_end, offset_index_end) = offsets[index + 1];
 
-            if let Some(texture) = self.textures.get(&texture_ids[index]) {
+            if let Some(texture) = inner.textures.get(&texture_ids[index]) {
                 builder
                     .set_scissor(
                         0,
@@ -249,14 +257,17 @@ impl EguiPipeline {
             }
         }
 
+        drop(inner);
         self.free_textures();
         Ok(())
     }
 
-    fn free_textures(&mut self) {
-        for texture in self.textures_to_free.drain(..) {
-            self.textures.remove(&texture);
-            self.images.remove(&texture);
+    fn free_textures(&self) {
+        let mut inner = self.inner.write().unwrap();
+        let inner = inner.deref_mut();
+        for texture in inner.textures_to_free.drain(..) {
+            inner.textures.remove(&texture);
+            inner.images.remove(&texture);
         }
     }
 
@@ -300,11 +311,13 @@ impl EguiPipeline {
     }
 
     fn update_textures<P>(
-        &mut self,
+        &self,
         textures_delta: &TexturesDelta,
         builder: &mut AutoCommandBufferBuilder<P>,
     ) -> Result<(), UploadError> {
-        self.textures_to_free
+        let mut inner = self.inner.write().unwrap();
+        inner
+            .textures_to_free
             .extend(textures_delta.free.iter().copied());
 
         for (texture_id, delta) in &textures_delta.set {
@@ -323,11 +336,11 @@ impl EguiPipeline {
                     [],
                 )?;
 
-                self.textures.insert(*texture_id, desc);
-                self.images.insert(*texture_id, Arc::clone(&image));
+                inner.textures.insert(*texture_id, desc);
+                inner.images.insert(*texture_id, Arc::clone(&image));
                 image
             } else {
-                Arc::clone(&self.images[&texture_id])
+                Arc::clone(&inner.images[&texture_id])
             };
 
             self.upload_image_or_delta(image, delta, builder)?;
@@ -354,7 +367,7 @@ impl EguiPipeline {
     }
 
     fn upload_image_or_delta<P>(
-        &mut self,
+        &self,
         image: Arc<Image>,
         delta: &ImageDelta,
         builder: &mut AutoCommandBufferBuilder<P>,

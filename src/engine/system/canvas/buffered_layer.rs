@@ -1,29 +1,44 @@
 use crate::engine::system::vulkan::lines::{Line, Vertex2d};
 use crate::engine::system::vulkan::pipelines::VulkanPipelines;
+use crate::engine::system::vulkan::system::RenderContext;
 use crate::engine::system::vulkan::textures::{TextureId, Textured, Vertex2dUv};
 use crate::engine::system::vulkan::triangles::Triangles;
+use crate::engine::system::vulkan::DrawError;
 use crate::engine::types::world2d::{Dim, Pos};
-use vulkano::command_buffer::{AutoCommandBufferBuilder, PrimaryAutoCommandBuffer};
+use std::sync::Arc;
+use vulkano::command_buffer::{AutoCommandBufferBuilder, SecondaryAutoCommandBuffer};
 
 type Uv<T> = Pos<T>;
 
 pub struct BufferedCanvasLayer {
-    size: [u32; 2],
-    actions: Vec<Action>,
     color: [f32; 4],
+    sink: ActionSink,
 }
 
-impl From<[u32; 2]> for BufferedCanvasLayer {
-    fn from(size: [u32; 2]) -> Self {
+impl Default for BufferedCanvasLayer {
+    fn default() -> Self {
         Self {
-            size,
-            actions: Vec::default(),
             color: [1.0, 1.0, 1.0, 1.0],
+            sink: ActionSink::Buffer(Vec::default()),
         }
     }
 }
 
 impl BufferedCanvasLayer {
+    pub fn new(
+        builder: AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
+        pipelines: Arc<VulkanPipelines>,
+    ) -> Self {
+        Self {
+            color: [1.0, 1.0, 1.0, 1.0],
+            sink: ActionSink::Commands {
+                current: None,
+                builder,
+                pipelines,
+            },
+        }
+    }
+
     pub fn set_draw_color(&mut self, color: [f32; 4]) {
         self.color = color;
     }
@@ -49,7 +64,7 @@ impl BufferedCanvasLayer {
     pub fn fill_rect<P: Into<Pos<f32>>, D: Into<Dim<f32>>>(&mut self, pos: P, dim: D) {
         let pos = pos.into();
         let dim = dim.into();
-        let triangle = Triangles {
+        self.sink.append(Triangles {
             vertices: [
                 pos,
                 pos + Dim::new(dim.x, 0.0),
@@ -62,16 +77,11 @@ impl BufferedCanvasLayer {
             .map(|pos| crate::engine::system::vulkan::triangles::Vertex2d { pos: pos.into() })
             .collect::<Vec<_>>(),
             color: self.color,
-        };
-        if let Some(Action::Triangles(triangles)) = self.actions.last_mut() {
-            triangles.push(triangle);
-        } else {
-            self.actions.push(Action::Triangles(vec![triangle]));
-        }
+        });
     }
 
     pub fn draw_path<P: Into<Pos<f32>> + Copy>(&mut self, positions: &[P]) {
-        let line = Line {
+        self.sink.append(Line {
             vertices: positions
                 .iter()
                 .copied()
@@ -80,12 +90,7 @@ impl BufferedCanvasLayer {
                 })
                 .collect(),
             color: self.color,
-        };
-        if let Some(Action::Lines(lines)) = self.actions.last_mut() {
-            lines.push(line);
-        } else {
-            self.actions.push(Action::Lines(vec![line]));
-        }
+        });
     }
 
     #[inline]
@@ -116,7 +121,7 @@ impl BufferedCanvasLayer {
         pos_uv: impl Iterator<Item = (P, U)>,
         texture: TextureId,
     ) {
-        let triangles = Textured {
+        self.sink.append(Textured {
             vertices: pos_uv
                 .map(|(pos, uv)| {
                     let pos = pos.into();
@@ -128,50 +133,89 @@ impl BufferedCanvasLayer {
                 })
                 .collect(),
             texture,
-        };
-        if let Some(Action::TexturedTriangle(textured)) = self.actions.last_mut() {
-            textured.push(triangles);
+        });
+    }
+
+    pub fn flush(
+        self,
+        ctx: &RenderContext,
+        pipelines: &VulkanPipelines,
+    ) -> Arc<SecondaryAutoCommandBuffer> {
+        self.sink.flush(ctx, pipelines)
+    }
+}
+
+enum ActionSink {
+    Buffer(Vec<Action>),
+    Commands {
+        current: Option<Action>,
+        builder: AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>,
+        pipelines: Arc<VulkanPipelines>,
+    },
+}
+
+impl ActionSink {
+    pub fn append(&mut self, action: impl Into<Action>) {
+        let action = action.into();
+        if let Some(current) = self.action_mut() {
+            if let Some(action) = current.try_push(action) {
+                self.push_action(action);
+            }
         } else {
-            self.actions.push(Action::TexturedTriangle(vec![triangles]));
+            self.push_action(action);
         }
     }
 
-    pub fn submit_to_render_pass(
+    pub fn action_mut(&mut self) -> Option<&mut Action> {
+        match self {
+            ActionSink::Buffer(buffer) => buffer.last_mut(),
+            ActionSink::Commands { current, .. } => current.as_mut(),
+        }
+    }
+
+    pub fn push_action(&mut self, action: Action) {
+        match self {
+            ActionSink::Buffer(buffer) => buffer.push(action),
+            ActionSink::Commands {
+                current,
+                builder,
+                pipelines,
+            } => {
+                if let Some(prev) = current.replace(action) {
+                    if let Err(e) = prev.flush(builder, pipelines) {
+                        eprintln!("{e:?}");
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn flush(
         self,
-        cmd: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
-        pipeline: &mut VulkanPipelines,
-    ) {
-        for action in self.actions {
-            match action {
-                Action::Lines(lines) => {
-                    if let Err(e) =
-                        pipeline
-                            .line
-                            .draw(cmd, self.size[0] as f32, self.size[1] as f32, &lines)
-                    {
+        ctx: &RenderContext,
+        pipelines: &VulkanPipelines,
+    ) -> Arc<SecondaryAutoCommandBuffer> {
+        match self {
+            ActionSink::Buffer(buffer) => {
+                let mut builder = ctx.create_command_buffer_builder().unwrap();
+                for action in buffer {
+                    if let Err(e) = action.flush(&mut builder, pipelines) {
                         eprintln!("{e:?}");
                     }
                 }
-                Action::Triangles(triangles) => {
-                    if let Err(e) = pipeline.triangles.draw(
-                        cmd,
-                        self.size[0] as f32,
-                        self.size[1] as f32,
-                        &triangles,
-                    ) {
+                builder.build().unwrap()
+            }
+            ActionSink::Commands {
+                current,
+                mut builder,
+                pipelines,
+            } => {
+                if let Some(action) = current {
+                    if let Err(e) = action.flush(&mut builder, &pipelines) {
                         eprintln!("{e:?}");
                     }
                 }
-                Action::TexturedTriangle(textured) => {
-                    if let Err(e) = pipeline.texture.draw(
-                        cmd,
-                        self.size[0] as f32,
-                        self.size[1] as f32,
-                        &textured,
-                    ) {
-                        eprintln!("{e:?}");
-                    }
-                }
+                builder.build().unwrap()
             }
         }
     }
@@ -181,4 +225,54 @@ enum Action {
     Lines(Vec<Line>),
     Triangles(Vec<Triangles>),
     TexturedTriangle(Vec<Textured>),
+}
+
+impl Action {
+    pub fn try_push(&mut self, other: Action) -> Option<Action> {
+        macro_rules! try_push {
+            ($($ty:ident, )+) => {
+                match (self, other) {
+                    $(
+                        (Action::$ty(dst), Action::$ty(src)) => {
+                            dst.extend(src.into_iter());
+                            None
+                        }
+                        (Action::$ty(_), other) => Some(other),
+                    )+
+                }
+            }
+        }
+
+        try_push!(Lines, Triangles, TexturedTriangle,)
+    }
+
+    pub fn flush<L>(
+        self,
+        builder: &mut AutoCommandBufferBuilder<L>,
+        pipelines: &VulkanPipelines,
+    ) -> Result<(), DrawError> {
+        match self {
+            Action::Lines(lines) => pipelines.line.draw(builder, &lines),
+            Action::Triangles(triangles) => pipelines.triangles.draw(builder, &triangles),
+            Action::TexturedTriangle(textured) => pipelines.texture.draw(builder, &textured),
+        }
+    }
+}
+
+impl From<Line> for Action {
+    fn from(value: Line) -> Self {
+        Action::Lines(vec![value])
+    }
+}
+
+impl From<Triangles> for Action {
+    fn from(value: Triangles) -> Self {
+        Action::Triangles(vec![value])
+    }
+}
+
+impl From<Textured> for Action {
+    fn from(value: Textured) -> Self {
+        Action::TexturedTriangle(vec![value])
+    }
 }

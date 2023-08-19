@@ -34,6 +34,10 @@ pub enum Error {
     FailedToCreateFramebuffers(Validated<VulkanError>),
     #[error("Failed to create render pass: {0:?}")]
     RenderPassCreationError(#[from] PipelineCreateError),
+    #[error("Failed to allocate Buffer of WriteDescriptor for binding {1}: {0:?}")]
+    FailedToAllocateWriteDescriptorBuffer(Validated<BufferAllocateError>, u32),
+    #[error("Failed to create a (secondary) command buffer: {0:?} ")]
+    FailedToCreateCommandBuffer(Validated<VulkanError>),
 }
 
 #[derive(thiserror::Error, Debug)]

@@ -1,11 +1,15 @@
-use crate::engine::system::vulkan::system::VulkanSystem;
-use crate::engine::system::vulkan::utils::pipeline::subpass_from_renderpass;
+use crate::engine::system::vulkan::system::{VulkanSystem, WriteDescriptorSetCollection};
+use crate::engine::system::vulkan::utils::pipeline::{
+    create_persistent_descriptor_set_from_collection, subpass_from_renderpass,
+};
 use crate::engine::system::vulkan::{DrawError, PipelineCreateError, ShaderLoadError};
 use crate::shader_from_path;
 use bytemuck::{Pod, Zeroable};
 use std::sync::Arc;
 use vulkano::buffer::{Buffer, BufferAllocateError, BufferCreateInfo, BufferUsage, Subbuffer};
 use vulkano::command_buffer::AutoCommandBufferBuilder;
+use vulkano::descriptor_set::allocator::{DescriptorSetAllocator, StandardDescriptorSetAlloc};
+use vulkano::descriptor_set::PersistentDescriptorSet;
 use vulkano::device::{Device, Features};
 use vulkano::memory::allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator};
 use vulkano::pipeline::cache::PipelineCache;
@@ -18,7 +22,7 @@ use vulkano::pipeline::graphics::viewport::ViewportState;
 use vulkano::pipeline::graphics::GraphicsPipelineCreateInfo;
 use vulkano::pipeline::layout::PipelineDescriptorSetLayoutCreateInfo;
 use vulkano::pipeline::{
-    GraphicsPipeline, Pipeline, PipelineLayout, PipelineShaderStageCreateInfo,
+    GraphicsPipeline, Pipeline, PipelineBindPoint, PipelineLayout, PipelineShaderStageCreateInfo,
 };
 use vulkano::render_pass::RenderPass;
 use vulkano::shader::EntryPoint;
@@ -27,16 +31,20 @@ use vulkano::Validated;
 pub struct LinePipeline {
     pipeline: Arc<GraphicsPipeline>,
     memo_allocator: StandardMemoryAllocator,
+    descriptor_set: Arc<PersistentDescriptorSet>,
 }
 
 impl TryFrom<&VulkanSystem> for LinePipeline {
     type Error = PipelineCreateError;
 
+    #[inline]
     fn try_from(vs: &VulkanSystem) -> Result<Self, Self::Error> {
         Self::new(
             Arc::clone(vs.device()),
             Arc::clone(vs.render_pass()),
             vs.pipeline_cache().map(Arc::clone),
+            vs.descriptor_set_allocator(),
+            vs.get_write_descriptor_sets(),
         )
     }
 }
@@ -51,10 +59,18 @@ impl LinePipeline {
         device: Arc<Device>,
         render_pass: Arc<RenderPass>,
         cache: Option<Arc<PipelineCache>>,
+        desc_allocator: &impl DescriptorSetAllocator<Alloc = StandardDescriptorSetAlloc>,
+        write_descriptors: &WriteDescriptorSetCollection,
     ) -> Result<Self, PipelineCreateError> {
+        let pipeline = Self::create_pipeline(Arc::clone(&device), render_pass, cache)?;
         Ok(Self {
             memo_allocator: StandardMemoryAllocator::new_default(Arc::clone(&device)),
-            pipeline: Self::create_pipeline(Arc::clone(&device), render_pass, cache)?,
+            descriptor_set: create_persistent_descriptor_set_from_collection(
+                &pipeline.layout().set_layouts()[0],
+                desc_allocator,
+                write_descriptors,
+            )?,
+            pipeline,
         })
     }
 
@@ -115,10 +131,8 @@ impl LinePipeline {
     }
 
     pub fn draw<P>(
-        &mut self,
+        &self,
         builder: &mut AutoCommandBufferBuilder<P>,
-        width: f32,
-        height: f32,
         lines: &[Line],
     ) -> Result<(), DrawError> {
         let mut offset = 0;
@@ -131,21 +145,20 @@ impl LinePipeline {
 
         builder
             .bind_pipeline_graphics(Arc::clone(&self.pipeline))?
-            .bind_vertex_buffers(0, vertex_buffer)?;
+            .bind_vertex_buffers(0, vertex_buffer)?
+            .bind_descriptor_sets(
+                PipelineBindPoint::Graphics,
+                Arc::clone(&self.pipeline.layout()),
+                0,
+                Arc::clone(&self.descriptor_set),
+            )?;
 
         for line in lines {
             builder
                 .push_constants(
                     Arc::clone(&self.pipeline.layout()),
                     0,
-                    [
-                        line.color[0],
-                        line.color[1],
-                        line.color[2],
-                        line.color[3],
-                        width,
-                        height,
-                    ],
+                    [line.color[0], line.color[1], line.color[2], line.color[3]],
                 )?
                 .draw(line.vertices.len() as u32, 1, offset, 0)?;
 
