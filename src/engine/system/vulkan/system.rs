@@ -3,13 +3,13 @@ use crate::engine::system::vulkan::{DrawError, Error};
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use vulkano::buffer::{Buffer, BufferCreateInfo, BufferUsage};
 use vulkano::command_buffer::allocator::StandardCommandBufferAllocator;
 use vulkano::command_buffer::{
     AutoCommandBufferBuilder, CommandBufferInheritanceInfo, CommandBufferInheritanceRenderPassInfo,
-    CommandBufferInheritanceRenderPassType, CommandBufferUsage, PrimaryAutoCommandBuffer,
-    RenderPassBeginInfo, SecondaryAutoCommandBuffer, SubpassBeginInfo, SubpassContents,
+    CommandBufferInheritanceRenderPassType, CommandBufferUsage, RenderPassBeginInfo,
+    SecondaryAutoCommandBuffer, SecondaryCommandBufferAbstract, SubpassBeginInfo, SubpassContents,
     SubpassEndInfo,
 };
 use vulkano::descriptor_set::allocator::{
@@ -205,15 +205,14 @@ impl VulkanSystem {
     }
 
     // TODO just for demo
-    pub fn render<F1, F2>(
+    pub fn render<F1>(
         &mut self,
         width: u32,
         height: u32,
-        before_render: F1,
+        render_callback: F1,
     ) -> Result<(), DrawError>
     where
-        F1: FnOnce(&mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>) -> F2,
-        F2: FnOnce(&RenderContext) -> Vec<Arc<SecondaryAutoCommandBuffer>>,
+        F1: FnOnce(&RenderContext) -> Vec<Arc<SecondaryAutoCommandBuffer>>,
     {
         let command_buffer_allocator =
             StandardCommandBufferAllocator::new(Arc::clone(&self.device), Default::default());
@@ -260,7 +259,27 @@ impl VulkanSystem {
         )
         .unwrap();
 
-        let inside_render = before_render(&mut primary);
+        let context = RenderContext {
+            queue_family_index: self.queue.queue_family_index(),
+            renderpass: &self.render_pass,
+            swapchain_framebuffer: &self.swapchain_framebuffers[swapchain_image_index as usize],
+            command_buffer_allocator: &command_buffer_allocator,
+        };
+
+        let mut prepare_commands: Vec<Arc<dyn SecondaryCommandBufferAbstract>> = Vec::new();
+        let mut render_commands: Vec<Arc<dyn SecondaryCommandBufferAbstract>> = Vec::new();
+
+        for command in render_callback(&context) {
+            if command.inheritance_info().render_pass.is_none() {
+                prepare_commands.push(command);
+            } else {
+                render_commands.push(command);
+            }
+        }
+
+        if let Err(e) = primary.execute_commands_from_vec(prepare_commands) {
+            eprintln!("Failed to execute preparation commands: {e:?}");
+        }
 
         primary
             .begin_render_pass(
@@ -289,17 +308,8 @@ impl VulkanSystem {
                 .collect(),
             )?;
 
-        let context = RenderContext {
-            queue_family_index: self.queue.queue_family_index(),
-            renderpass: &self.render_pass,
-            swapchain_framebuffer: &self.swapchain_framebuffers[swapchain_image_index as usize],
-            command_buffer_allocator: &command_buffer_allocator,
-        };
-
-        for buffer in inside_render(&context) {
-            if let Err(e) = primary.execute_commands(buffer) {
-                eprintln!("Failed to execute command buffer: {e:?}");
-            }
+        if let Err(e) = primary.execute_commands_from_vec(render_commands) {
+            eprintln!("Failed to execute rendering commands: {e:?}");
         }
 
         primary.end_render_pass(SubpassEndInfo::default())?;
@@ -474,7 +484,24 @@ pub struct RenderContext<'a> {
 }
 
 impl<'a> RenderContext<'a> {
-    pub fn create_command_buffer_builder(
+    pub fn create_preparation_buffer_builder(
+        &self,
+    ) -> Result<AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, Error> {
+        AutoCommandBufferBuilder::secondary(
+            self.command_buffer_allocator,
+            self.queue_family_index,
+            CommandBufferUsage::OneTimeSubmit,
+            CommandBufferInheritanceInfo {
+                render_pass: None,
+                occlusion_query: None,
+                query_statistics_flags: Default::default(),
+                ..CommandBufferInheritanceInfo::default()
+            },
+        )
+        .map_err(Error::FailedToCreateCommandBuffer)
+    }
+
+    pub fn create_render_buffer_builder(
         &self,
     ) -> Result<AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, Error> {
         let mut secondary = AutoCommandBufferBuilder::secondary(

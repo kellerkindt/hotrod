@@ -197,7 +197,7 @@ impl ActionSink {
     ) -> Arc<SecondaryAutoCommandBuffer> {
         match self {
             ActionSink::Buffer(buffer) => {
-                let mut builder = ctx.create_command_buffer_builder().unwrap();
+                let mut builder = ctx.create_render_buffer_builder().unwrap();
                 for action in buffer {
                     if let Err(e) = action.flush(&mut builder, pipelines) {
                         eprintln!("{e:?}");

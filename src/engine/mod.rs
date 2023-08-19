@@ -9,9 +9,7 @@ use sdl2::video::WindowBuildError;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use system::vulkan::system::VulkanSystem;
-use vulkano::command_buffer::{
-    AutoCommandBufferBuilder, PrimaryAutoCommandBuffer, SecondaryAutoCommandBuffer,
-};
+use vulkano::command_buffer::SecondaryAutoCommandBuffer;
 use vulkano::instance::{Instance, InstanceExtensions};
 use vulkano::swapchain::{Surface, SurfaceApi};
 use vulkano::{Handle, LoadingError, Validated, VulkanError, VulkanLibrary, VulkanObject};
@@ -202,84 +200,57 @@ impl<'a> BeforeRenderContext<'a> {
         self.engine.egui_system.update(self.width, self.height, f)
     }
 
-    pub fn render<F1, F2>(self, f1: F1) -> Result<(), DrawError>
+    pub fn render<F1>(self, f1: F1) -> Result<(), DrawError>
     where
-        F1: FnOnce(PrepareRenderContext) -> F2,
-        F2: FnOnce(RenderContext) -> Vec<Arc<SecondaryAutoCommandBuffer>>,
+        F1: FnOnce(RenderContext) -> Vec<Arc<SecondaryAutoCommandBuffer>>,
     {
         self.engine
             .vulkan_system
-            .render(self.width, self.height, |commands| {
+            .render(self.width, self.height, |render_context| {
+                let mut commands = Vec::default();
+
                 #[cfg(feature = "ui-egui")]
-                if let Err(e) = self
-                    .engine
-                    .vulkan_pipelines
-                    .egui
-                    .prepare(commands, &self.engine.egui_system)
                 {
-                    eprintln!("Failed to prepare rendering for egui: {e}");
-                    eprintln!("{e:?}");
+                    let mut builder = render_context.create_preparation_buffer_builder().unwrap();
+                    if let Err(e) = self
+                        .engine
+                        .vulkan_pipelines
+                        .egui
+                        .prepare(&mut builder, &self.engine.egui_system)
+                    {
+                        eprintln!("Failed to prepare rendering for egui: {e}");
+                        eprintln!("{e:?}");
+                    }
+
+                    commands.push(builder.build().unwrap());
                 }
 
-                let f2 = f1(PrepareRenderContext {
-                    commands,
+                commands.extend(f1(RenderContext {
+                    inner: render_context,
                     pipelines: &self.engine.vulkan_pipelines,
                     width: self.width,
                     height: self.height,
-                });
+                }));
 
-                |render_context| {
-                    let mut commands = Vec::default();
+                #[cfg(feature = "ui-egui")]
+                {
+                    let mut builder = render_context.create_render_buffer_builder().unwrap();
+                    if let Err(e) = self
+                        .engine
+                        .vulkan_pipelines
+                        .egui
+                        .draw(&mut builder, &self.engine.egui_system)
+                    {
+                        eprintln!("Failed to render egui: {e}");
+                        eprintln!("{e:?}");
+                    }
 
-                    std::thread::scope(|scope| {
-                        #[cfg(feature = "ui-egui")]
-                        let egui = {
-                            scope.spawn(|| {
-                                let mut commands =
-                                    render_context.create_command_buffer_builder().unwrap();
-                                if let Err(e) = self
-                                    .engine
-                                    .vulkan_pipelines
-                                    .egui
-                                    .draw(&mut commands, &self.engine.egui_system)
-                                {
-                                    eprintln!("Failed to render egui: {e}");
-                                    eprintln!("{e:?}");
-                                }
-
-                                commands.build().unwrap()
-                            })
-                        };
-
-                        commands.extend(f2(RenderContext {
-                            inner: render_context,
-                            pipelines: &self.engine.vulkan_pipelines,
-                            width: self.width,
-                            height: self.height,
-                        }));
-
-                        #[cfg(feature = "ui-egui")]
-                        match egui.join() {
-                            Ok(egui) => {
-                                commands.push(egui);
-                            }
-                            Err(e) => {
-                                eprintln!("Failed to collect egui commands: {e:?}")
-                            }
-                        }
-                    });
-
-                    commands
+                    commands.push(builder.build().unwrap());
                 }
+
+                commands
             })
     }
-}
-
-pub struct PrepareRenderContext<'a> {
-    pub commands: &'a mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
-    pub pipelines: &'a Arc<VulkanPipelines>,
-    pub width: u32,
-    pub height: u32,
 }
 
 pub struct RenderContext<'a, 'b> {
