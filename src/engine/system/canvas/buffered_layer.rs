@@ -136,6 +136,7 @@ impl BufferedCanvasLayer {
         });
     }
 
+    #[must_use]
     pub fn flush(
         self,
         ctx: &RenderContext,
