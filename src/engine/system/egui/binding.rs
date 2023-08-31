@@ -23,7 +23,7 @@ impl Sdl2EguiMapping {
             events: core::mem::take(&mut self.input.events),
             hovered_files: core::mem::take(&mut self.input.hovered_files),
             dropped_files: core::mem::take(&mut self.input.dropped_files),
-            has_focus: self.input.has_focus,
+            focused: self.input.focused,
         }
     }
 
