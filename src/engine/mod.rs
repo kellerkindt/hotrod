@@ -1,10 +1,10 @@
 use crate::engine::builder::EngineBuilder;
 use crate::engine::parts::sdl::SdlParts;
 use crate::engine::system::vulkan::beautiful_lines::BeautifulLinePipeline;
+use crate::engine::system::vulkan::fps::FpsManager;
 use crate::engine::system::vulkan::pipelines::VulkanPipelines;
 use crate::engine::system::vulkan::DrawError;
 use sdl2::event::{Event, WindowEvent};
-use sdl2::gfx::framerate::FPSManager;
 use sdl2::keyboard::Keycode;
 use sdl2::video::WindowBuildError;
 use std::sync::Arc;
@@ -28,7 +28,7 @@ pub struct Engine {
     #[cfg(feature = "ui-egui")]
     // drop after the vulkan system! (last is fine, too)
     sdl: SdlParts,
-    framerate_manager: FPSManager,
+    framerate_manager: FpsManager,
 }
 
 impl Engine {
@@ -100,7 +100,7 @@ impl Engine {
                 window_maximized: false,
                 context,
             },
-            framerate_manager: FPSManager::new(),
+            framerate_manager: FpsManager::new(60),
         })
     }
 
@@ -167,12 +167,12 @@ impl Engine {
 
     #[inline]
     pub fn set_fps(&mut self, fps: u32) {
-        self.framerate_manager.set_framerate(fps).unwrap();
+        self.framerate_manager.set_target_frame_rate(fps);
     }
 
     #[inline]
     pub fn delay(&mut self) -> Duration {
-        Duration::from_millis(u64::from(self.framerate_manager.delay()))
+        self.framerate_manager.delay()
     }
 }
 

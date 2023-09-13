@@ -9,6 +9,7 @@ pub mod utils;
 pub mod beautiful_lines;
 #[cfg(feature = "ui-egui")]
 pub mod egui;
+pub mod fps;
 pub mod lines;
 pub mod pipelines;
 pub mod system;
