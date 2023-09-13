@@ -57,6 +57,8 @@ pub enum DrawError {
     // PipelineExecutionError(#[from] Validated<VulkanError>),
     #[error("Failed to build command buffer: {0}")]
     FailedToBuildCommandBuffer(Validated<VulkanError>),
+    #[error("Failed to acquire the next swapchain image: {0}")]
+    FailedToAcquireSwapchainImage(VulkanError),
 }
 
 #[derive(thiserror::Error, Debug)]

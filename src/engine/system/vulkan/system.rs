@@ -198,10 +198,6 @@ impl VulkanSystem {
     where
         F1: FnOnce(&RenderContext) -> Vec<Arc<SecondaryAutoCommandBuffer>>,
     {
-        if let Some(mut previous) = self.previous_frame_end.take() {
-            previous.cleanup_finished();
-        }
-
         if core::mem::take(&mut self.recreate_swapchain) {
             match self.swapchain.recreate(SwapchainCreateInfo {
                 image_extent: [width, height],
@@ -249,6 +245,13 @@ impl VulkanSystem {
 
         let mut prepare_commands: Vec<Arc<dyn SecondaryCommandBufferAbstract>> = Vec::new();
         let mut render_commands: Vec<Arc<dyn SecondaryCommandBufferAbstract>> = Vec::new();
+
+        acquire_future
+            .wait(Some(Duration::from_secs(10)))
+            .map_err(DrawError::FailedToAcquireSwapchainImage)?;
+        if let Some(previous) = self.previous_frame_end.as_mut() {
+            previous.cleanup_finished();
+        }
 
         if core::mem::take(&mut self.swapchain_is_new) {
             let mut buffer = context
@@ -311,7 +314,11 @@ impl VulkanSystem {
             .build()
             .map_err(DrawError::FailedToBuildCommandBuffer)?;
 
-        let future = acquire_future
+        let future = self
+            .previous_frame_end
+            .take()
+            .unwrap_or_else(|| vulkano::sync::now(Arc::clone(&self.device)).boxed())
+            .join(acquire_future)
             .then_execute(Arc::clone(&self.queue), command_buffer)
             .unwrap()
             .then_swapchain_present(
