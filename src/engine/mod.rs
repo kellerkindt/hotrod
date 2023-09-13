@@ -98,6 +98,9 @@ impl Engine {
                 // drop after the vulkan system!
                 window,
                 window_maximized: false,
+                #[cfg(feature = "ttf-sdl2")]
+                ttf: sdl2::ttf::init()
+                    .map_err(|e| Error::SdlError(format!("Failed to init TTF module: {e}")))?,
                 context,
             },
             framerate_manager: FpsManager::new(60),
