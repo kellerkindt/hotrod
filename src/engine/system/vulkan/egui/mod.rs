@@ -40,9 +40,9 @@ use crate::ui::egui::epaint::{ImageDelta, Primitive};
 
 struct Inner {
     pub textures:
-        HashMap<TextureId, Arc<PersistentDescriptorSet>, BuildHasherDefault<NoHashHasher<u64>>>,
+        HashMap<IdWrapper, Arc<PersistentDescriptorSet>, BuildHasherDefault<NoHashHasher<u64>>>,
     pub textures_to_free: Vec<TextureId>,
-    pub images: HashMap<TextureId, Arc<Image>, BuildHasherDefault<NoHashHasher<u64>>>,
+    pub images: HashMap<IdWrapper, Arc<Image>, BuildHasherDefault<NoHashHasher<u64>>>,
 }
 
 pub struct EguiPipeline {
@@ -230,7 +230,7 @@ impl EguiPipeline {
             let (offset_vertex, offset_index) = offsets[index];
             let (_offset_vertex_end, offset_index_end) = offsets[index + 1];
 
-            if let Some(texture) = inner.textures.get(&texture_ids[index]) {
+            if let Some(texture) = inner.textures.get(&IdWrapper::from(texture_ids[index])) {
                 builder
                     .set_scissor(
                         0,
@@ -265,7 +265,7 @@ impl EguiPipeline {
     fn free_textures(&self) {
         let mut inner = self.inner.write().unwrap();
         let inner = inner.deref_mut();
-        for texture in inner.textures_to_free.drain(..) {
+        for texture in inner.textures_to_free.drain(..).map(IdWrapper::from) {
             inner.textures.remove(&texture);
             inner.images.remove(&texture);
         }
@@ -321,6 +321,7 @@ impl EguiPipeline {
             .extend(textures_delta.free.iter().copied());
 
         for (texture_id, delta) in &textures_delta.set {
+            let texture_id = IdWrapper::from(*texture_id);
             let image = if delta.is_whole() {
                 let image = self.create_image(&delta.image)?;
                 let layout = &self.pipeline.layout().set_layouts()[0];
@@ -336,8 +337,8 @@ impl EguiPipeline {
                     [],
                 )?;
 
-                inner.textures.insert(*texture_id, desc);
-                inner.images.insert(*texture_id, Arc::clone(&image));
+                inner.textures.insert(texture_id, desc);
+                inner.images.insert(texture_id, Arc::clone(&image));
                 image
             } else {
                 Arc::clone(&inner.images[&texture_id])
@@ -432,6 +433,21 @@ impl From<&egui::epaint::Vertex> for AdapterVertex {
             pos: [value.pos.x, value.pos.y],
             uv: [value.uv.x, value.uv.y],
             color: value.color.to_array().map(|v| f32::from(v) / 255.0),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+struct IdWrapper(u64);
+
+impl From<TextureId> for IdWrapper {
+    fn from(value: TextureId) -> Self {
+        match value {
+            TextureId::Managed(id) | TextureId::User(id) if id.leading_zeros() == 0 => {
+                panic!("First bit of the texture id is reserved for user texture flag!")
+            }
+            TextureId::Managed(id) => Self(id),
+            TextureId::User(id) => Self(id | 1_u64.rotate_right(1)),
         }
     }
 }
