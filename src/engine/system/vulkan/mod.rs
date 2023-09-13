@@ -3,6 +3,7 @@ use vulkano::image::ImageAllocateError;
 use vulkano::pipeline::layout::IntoPipelineLayoutCreateInfoError;
 use vulkano::{Validated, ValidationError, VulkanError};
 
+pub mod desc;
 pub mod utils;
 
 pub mod beautiful_lines;
@@ -36,6 +37,8 @@ pub enum Error {
     RenderPassCreationError(#[from] PipelineCreateError),
     #[error("Failed to allocate Buffer of WriteDescriptor for binding {1}: {0:?}")]
     FailedToAllocateWriteDescriptorBuffer(Validated<BufferAllocateError>, u32),
+    #[error("Failed to update Buffer of WriteDescriptor for binding {1}: {0:?}")]
+    FailedToUpdateWriteDescriptorBuffer(Box<ValidationError>, u32),
     #[error("Failed to create a (secondary) command buffer: {0:?} ")]
     FailedToCreateCommandBuffer(Validated<VulkanError>),
 }

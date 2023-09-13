@@ -21,7 +21,9 @@ use vulkano::image::view::ImageView;
 use vulkano::image::{Image, ImageAllocateError, ImageCreateInfo, ImageType, ImageUsage};
 use vulkano::memory::allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator};
 use vulkano::pipeline::cache::PipelineCache;
-use vulkano::pipeline::graphics::color_blend::{AttachmentBlend, BlendFactor, ColorBlendState};
+use vulkano::pipeline::graphics::color_blend::{
+    AttachmentBlend, BlendFactor, BlendOp, ColorBlendState,
+};
 use vulkano::pipeline::graphics::input_assembly::{InputAssemblyState, PrimitiveTopology};
 use vulkano::pipeline::graphics::multisample::MultisampleState;
 use vulkano::pipeline::graphics::rasterization::{CullMode, RasterizationState};
@@ -125,6 +127,11 @@ impl EguiPipeline {
                 color_blend_state: Some(ColorBlendState::new(1).blend({
                     let mut blend = AttachmentBlend::alpha();
                     blend.src_color_blend_factor = BlendFactor::One;
+                    blend.dst_color_blend_factor = BlendFactor::OneMinusSrcAlpha;
+                    blend.color_blend_op = BlendOp::Add;
+                    blend.src_alpha_blend_factor = BlendFactor::OneMinusDstAlpha;
+                    blend.dst_alpha_blend_factor = BlendFactor::One;
+                    blend.alpha_blend_op = BlendOp::Add;
                     blend
                 })),
                 subpass: Some(subpass_from_renderpass(render_pass)?),

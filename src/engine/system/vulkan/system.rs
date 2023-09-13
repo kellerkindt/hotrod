@@ -1,11 +1,11 @@
+use crate::engine::system::vulkan::desc::binding_101_window_size::WindowSize;
+use crate::engine::system::vulkan::desc::WriteDescriptorSetOrigin;
 use crate::engine::system::vulkan::utils::pipeline::single_pass_render_pass_from_image_format;
 use crate::engine::system::vulkan::{DrawError, Error};
-use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use vulkano::buffer::{Buffer, BufferCreateInfo, BufferUsage};
-use vulkano::command_buffer::allocator::StandardCommandBufferAllocator;
+use vulkano::command_buffer::allocator::{CommandBufferAllocator, StandardCommandBufferAllocator};
 use vulkano::command_buffer::{
     AutoCommandBufferBuilder, CommandBufferInheritanceInfo, CommandBufferInheritanceRenderPassInfo,
     CommandBufferInheritanceRenderPassType, CommandBufferUsage, RenderPassBeginInfo,
@@ -15,17 +15,14 @@ use vulkano::command_buffer::{
 use vulkano::descriptor_set::allocator::{
     DescriptorSetAllocator, StandardDescriptorSetAlloc, StandardDescriptorSetAllocator,
 };
-use vulkano::descriptor_set::{WriteDescriptorSet, WriteDescriptorSetElements};
+use vulkano::descriptor_set::WriteDescriptorSet;
 use vulkano::device::physical::{PhysicalDevice, PhysicalDeviceType};
 use vulkano::device::{
     Device, DeviceCreateInfo, DeviceExtensions, Features, Queue, QueueCreateInfo, QueueFlags,
 };
-use vulkano::format::Format;
 use vulkano::image::view::ImageView;
 use vulkano::image::{Image, ImageUsage};
-use vulkano::memory::allocator::{
-    AllocationCreateInfo, MemoryAllocator, MemoryTypeFilter, StandardMemoryAllocator,
-};
+use vulkano::memory::allocator::{MemoryAllocator, StandardMemoryAllocator};
 use vulkano::pipeline::cache::PipelineCache;
 use vulkano::pipeline::graphics::viewport::Viewport;
 use vulkano::render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass, Subpass};
@@ -46,6 +43,7 @@ pub struct VulkanSystem {
     swapchain_images: Vec<Arc<Image>>,
     swapchain_framebuffers: Vec<Arc<Framebuffer>>,
     recreate_swapchain: bool,
+    swapchain_is_new: bool,
     previous_frame_end: Option<Box<dyn GpuFuture>>,
     write_descriptors: WriteDescriptorSetCollection,
     memo_allocator: StandardMemoryAllocator,
@@ -97,6 +95,7 @@ impl VulkanSystem {
             desc_allocator: StandardDescriptorSetAllocator::new(Arc::clone(&device)),
             queue: queues.next().expect("Promised queue is not present"),
             recreate_swapchain: false,
+            swapchain_is_new: false,
             previous_frame_end: Some(vulkano::sync::now(Arc::clone(&device)).boxed()),
             device,
             swapchain_framebuffers: create_framebuffers(&swapchain_images, &render_pass)
@@ -116,43 +115,23 @@ impl VulkanSystem {
     }
 
     fn init_write_descriptors(&mut self) -> Result<(), Error> {
-        self.create_or_update_write_descriptor_101_window_size()?;
+        self.write_descriptors =
+            [WindowSize::from(&*self).create_descriptor_set(&self.memo_allocator)?]
+                .into_iter()
+                .map(|desc| (desc.binding(), desc))
+                .collect();
         Ok(())
     }
 
-    fn create_or_update_write_descriptor_101_window_size(&mut self) -> Result<(), Error> {
-        const BINDING: u32 = 101;
-        match self.write_descriptors.entry(BINDING) {
-            Entry::Occupied(set) => {
-                if let WriteDescriptorSetElements::Buffer(buffer) = set.get().elements() {
-                    let buffer = buffer[0].buffer.clone().cast_aligned::<f32>();
-                    let mut write = buffer.write().unwrap();
-                    let size = self.swapchain.image_extent().map(|v| v as f32);
-                    for (dst, v) in write.iter_mut().zip(size) {
-                        *dst = v;
-                    }
-                }
-            }
-            Entry::Vacant(v) => {
-                v.insert(WriteDescriptorSet::buffer(
-                    BINDING,
-                    Buffer::from_iter(
-                        &self.memo_allocator,
-                        BufferCreateInfo {
-                            usage: BufferUsage::UNIFORM_BUFFER,
-                            ..BufferCreateInfo::default()
-                        },
-                        AllocationCreateInfo {
-                            memory_type_filter: MemoryTypeFilter::PREFER_DEVICE
-                                | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
-                            ..AllocationCreateInfo::default()
-                        },
-                        self.swapchain.image_extent().map(|v| v as f32),
-                    )
-                    .map_err(|e| Error::FailedToAllocateWriteDescriptorBuffer(e, BINDING))?,
-                ));
-            }
+    fn update_write_descriptor_sets<T, A: CommandBufferAllocator>(
+        &self,
+        cmds: &mut AutoCommandBufferBuilder<T, A>,
+    ) -> Result<(), Error> {
+        let window_size = WindowSize::from(&*self);
+        if let Some(current) = self.write_descriptors.get(&window_size.binding()) {
+            window_size.update(cmds, current)?;
         }
+
         Ok(())
     }
 
@@ -167,8 +146,8 @@ impl VulkanSystem {
     }
 
     #[inline]
-    pub fn image_format(&self) -> Format {
-        self.swapchain.image_format()
+    pub fn swapchain(&self) -> &Swapchain {
+        &self.swapchain
     }
 
     #[inline]
@@ -230,9 +209,7 @@ impl VulkanSystem {
                     self.swapchain_framebuffers =
                         create_framebuffers(&self.swapchain_images, &self.render_pass)
                             .map_err(DrawError::FailedToRecreateTheFramebuffers)?;
-                    if let Err(e) = self.create_or_update_write_descriptor_101_window_size() {
-                        eprintln!("Failed to update descriptor: {e:?}");
-                    }
+                    self.swapchain_is_new = true;
                 }
                 Err(e) => {
                     eprintln!("{e}");
@@ -268,6 +245,19 @@ impl VulkanSystem {
 
         let mut prepare_commands: Vec<Arc<dyn SecondaryCommandBufferAbstract>> = Vec::new();
         let mut render_commands: Vec<Arc<dyn SecondaryCommandBufferAbstract>> = Vec::new();
+
+        if core::mem::take(&mut self.swapchain_is_new) {
+            let mut buffer = context
+                .create_preparation_buffer_builder()
+                .expect("Failed to create preparation command buffer for descriptor updates");
+            self.update_write_descriptor_sets(&mut buffer)
+                .expect("Failed to update write descriptor sets");
+            prepare_commands.push(
+                buffer
+                    .build()
+                    .expect("Failed to build command buffer for descriptor updates"),
+            );
+        }
 
         for command in render_callback(&context) {
             if command.inheritance_info().render_pass.is_none() {
@@ -348,6 +338,10 @@ impl VulkanSystem {
                     Some(vulkano::sync::now(Arc::clone(&self.device)).boxed());
             }
         }
+
+        // TODO force wait for completion here, otherwise concurrent buffer access violations
+        // let _ = self.previous_frame_end.take();
+        self.previous_frame_end = Some(vulkano::sync::now(Arc::clone(&self.device)).boxed());
 
         Ok(())
     }
