@@ -198,7 +198,9 @@ impl VulkanSystem {
     where
         F1: FnOnce(&RenderContext) -> Vec<Arc<SecondaryAutoCommandBuffer>>,
     {
-        self.previous_frame_end.as_mut().unwrap().cleanup_finished();
+        if let Some(mut previous) = self.previous_frame_end.take() {
+            previous.cleanup_finished();
+        }
 
         if core::mem::take(&mut self.recreate_swapchain) {
             match self.swapchain.recreate(SwapchainCreateInfo {
@@ -309,11 +311,7 @@ impl VulkanSystem {
             .build()
             .map_err(DrawError::FailedToBuildCommandBuffer)?;
 
-        let future = self
-            .previous_frame_end
-            .take()
-            .unwrap()
-            .join(acquire_future)
+        let future = acquire_future
             .then_execute(Arc::clone(&self.queue), command_buffer)
             .unwrap()
             .then_swapchain_present(
@@ -340,10 +338,6 @@ impl VulkanSystem {
                     Some(vulkano::sync::now(Arc::clone(&self.device)).boxed());
             }
         }
-
-        // TODO force wait for completion here, otherwise concurrent buffer access violations
-        // let _ = self.previous_frame_end.take();
-        self.previous_frame_end = Some(vulkano::sync::now(Arc::clone(&self.device)).boxed());
 
         Ok(())
     }
