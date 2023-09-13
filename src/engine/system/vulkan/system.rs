@@ -48,6 +48,7 @@ pub struct VulkanSystem {
     write_descriptors: WriteDescriptorSetCollection,
     memo_allocator: StandardMemoryAllocator,
     desc_allocator: StandardDescriptorSetAllocator,
+    cmd_allocator: StandardCommandBufferAllocator,
 }
 
 impl VulkanSystem {
@@ -93,6 +94,10 @@ impl VulkanSystem {
         Self {
             memo_allocator: StandardMemoryAllocator::new_default(Arc::clone(&device)),
             desc_allocator: StandardDescriptorSetAllocator::new(Arc::clone(&device)),
+            cmd_allocator: StandardCommandBufferAllocator::new(
+                Arc::clone(&device),
+                Default::default(),
+            ),
             queue: queues.next().expect("Promised queue is not present"),
             recreate_swapchain: false,
             swapchain_is_new: false,
@@ -193,9 +198,6 @@ impl VulkanSystem {
     where
         F1: FnOnce(&RenderContext) -> Vec<Arc<SecondaryAutoCommandBuffer>>,
     {
-        let command_buffer_allocator =
-            StandardCommandBufferAllocator::new(Arc::clone(&self.device), Default::default());
-
         self.previous_frame_end.as_mut().unwrap().cleanup_finished();
 
         if core::mem::take(&mut self.recreate_swapchain) {
@@ -230,7 +232,7 @@ impl VulkanSystem {
         }
 
         let mut primary = AutoCommandBufferBuilder::primary(
-            &command_buffer_allocator,
+            &self.cmd_allocator,
             self.queue.queue_family_index(),
             CommandBufferUsage::OneTimeSubmit,
         )
@@ -240,7 +242,7 @@ impl VulkanSystem {
             queue_family_index: self.queue.queue_family_index(),
             renderpass: &self.render_pass,
             swapchain_framebuffer: &self.swapchain_framebuffers[swapchain_image_index as usize],
-            command_buffer_allocator: &command_buffer_allocator,
+            command_buffer_allocator: &self.cmd_allocator,
         };
 
         let mut prepare_commands: Vec<Arc<dyn SecondaryCommandBufferAbstract>> = Vec::new();
