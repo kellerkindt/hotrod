@@ -26,6 +26,8 @@ vec4 gamma_from_linear_rgba(vec4 linear_rgba) {
 }
 
 void main() {
-    // The texture is set up with `SRGB8_ALPHA8`
-    out_color = in_color * gamma_from_linear_rgba(texture(font_texture, in_uv));
+    // The texture is set up with `SRGB8_ALPHA8` !?!?!?!
+    // out_color = in_color * gamma_from_linear_rgba(texture(font_texture, in_uv));
+    
+    out_color = in_color * texture(font_texture, in_uv);
 }
