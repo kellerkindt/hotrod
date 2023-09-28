@@ -28,8 +28,9 @@ nohash-hasher = "0.2.0"
 
 egui = { version = "0.22.0", optional = true }
 egui_extras = { version = "0.22.0", optional = true }
+egui-notify = { version = "0.9.0", optional = true }
 
 [features]
 default = ["ui-egui", "ttf-sdl2"]
-ui-egui = ["egui", "egui_extras"]
+ui-egui = ["egui", "egui_extras", "egui-notify"]
 ttf-sdl2 = ["sdl2/ttf"]
