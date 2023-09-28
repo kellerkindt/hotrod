@@ -275,6 +275,7 @@ impl<'a> BeforeRenderContext<'a> {
     }
 }
 
+#[derive(Copy, Clone)]
 pub struct RenderContext<'a, 'b> {
     pub inner: &'a system::vulkan::system::RenderContext<'b>,
     pub pipelines: &'a Arc<VulkanPipelines>,
