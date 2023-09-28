@@ -4,7 +4,7 @@ use crate::engine::system::vulkan::utils::pipeline::subpass_from_renderpass;
 use crate::engine::system::vulkan::{DrawError, PipelineCreateError, ShaderLoadError, UploadError};
 use crate::shader_from_path;
 use bytemuck::{Pod, Zeroable};
-use egui::{ClippedPrimitive, Color32, ImageData, Rect, TextureId, TexturesDelta};
+use egui::{ClippedPrimitive, Color32, ImageData, Rect, TextureId, TextureOptions, TexturesDelta};
 use nohash_hasher::NoHashHasher;
 use std::collections::HashMap;
 use std::hash::BuildHasherDefault;
@@ -39,21 +39,23 @@ use vulkano::shader::EntryPoint;
 use vulkano::{Validated, VulkanError};
 
 use crate::ui::egui::epaint::{ImageDelta, Primitive};
+use crate::ui::egui::TextureFilter;
 
 struct Inner {
     pub textures:
         HashMap<IdWrapper, Arc<PersistentDescriptorSet>, BuildHasherDefault<NoHashHasher<u64>>>,
     pub textures_to_free: Vec<TextureId>,
     pub images: HashMap<IdWrapper, Arc<Image>, BuildHasherDefault<NoHashHasher<u64>>>,
+    pub texture_samplers: HashMap<TextureOptions, Arc<Sampler>>,
 }
 
 pub struct EguiPipeline {
     pub queue: Arc<Queue>,
     pub pipeline: Arc<GraphicsPipeline>,
-    pub texture_sampler: Arc<Sampler>,
     pub desc_allocator: StandardDescriptorSetAllocator,
     pub memo_allocator: StandardMemoryAllocator,
     inner: RwLock<Inner>,
+    device: Arc<Device>,
 }
 
 impl TryFrom<&VulkanSystem> for EguiPipeline {
@@ -81,12 +83,13 @@ impl EguiPipeline {
             desc_allocator: StandardDescriptorSetAllocator::new(Arc::clone(&device)),
             memo_allocator: StandardMemoryAllocator::new_default(Arc::clone(&device)),
             pipeline: Self::create_pipeline(Arc::clone(&device), render_pass, cache)?,
-            texture_sampler: Self::create_texture_sampler(device)?,
             inner: RwLock::new(Inner {
                 textures: HashMap::default(),
                 textures_to_free: Vec::default(),
                 images: HashMap::default(),
+                texture_samplers: HashMap::default(),
             }),
+            device,
         })
     }
 
@@ -140,13 +143,26 @@ impl EguiPipeline {
         )?)
     }
 
-    fn create_texture_sampler(device: Arc<Device>) -> Result<Arc<Sampler>, Validated<VulkanError>> {
+    fn create_texture_sampler(
+        device: Arc<Device>,
+        options: TextureOptions,
+    ) -> Result<Arc<Sampler>, Validated<VulkanError>> {
+        fn from_egui_filter(filter: TextureFilter) -> Filter {
+            match filter {
+                TextureFilter::Nearest => Filter::Nearest,
+                TextureFilter::Linear => Filter::Linear,
+            }
+        }
+
         Sampler::new(
             device,
             SamplerCreateInfo {
-                mag_filter: Filter::Linear,
-                min_filter: Filter::Linear,
-                mipmap_mode: SamplerMipmapMode::Linear,
+                mag_filter: from_egui_filter(options.magnification),
+                min_filter: from_egui_filter(options.minification),
+                mipmap_mode: match from_egui_filter(options.minification) {
+                    Filter::Linear => SamplerMipmapMode::Linear,
+                    _ => SamplerMipmapMode::Nearest,
+                },
                 ..SamplerCreateInfo::default()
             },
         )
@@ -339,7 +355,18 @@ impl EguiPipeline {
                     [WriteDescriptorSet::image_view_sampler(
                         0,
                         ImageView::new_default(Arc::clone(&image))?,
-                        Arc::clone(&self.texture_sampler),
+                        Arc::clone(
+                            inner
+                                .texture_samplers
+                                .entry(delta.options.clone())
+                                .or_insert_with(|| {
+                                    Self::create_texture_sampler(
+                                        Arc::clone(&self.device),
+                                        delta.options.clone(),
+                                    )
+                                    .unwrap()
+                                }),
+                        ),
                     )],
                     [],
                 )?;
