@@ -1,6 +1,6 @@
 use crate::ui::egui::ClippedPrimitive;
 use binding::Sdl2EguiMapping;
-use egui::{Context, TexturesDelta};
+use egui::{Context, CursorIcon, TexturesDelta};
 use sdl2::event::Event;
 
 mod binding;
@@ -9,6 +9,7 @@ mod binding;
 pub struct EguiSystem {
     context: Context,
     binding: Sdl2EguiMapping,
+    current_cursor: Option<CursorIcon>,
     pub(crate) width: f32,
     pub(crate) height: f32,
     /// [`TexturesDelta`] to upload next
@@ -46,11 +47,18 @@ impl EguiSystem {
             ui(&ctx);
         });
 
-        if let Some(cursor) = self
-            .binding
-            .cursor_icon_to_cursor(output.platform_output.cursor_icon)
+        if self
+            .current_cursor
+            .filter(|c| *c == output.platform_output.cursor_icon)
+            .is_none()
         {
-            cursor.set();
+            self.current_cursor = Some(output.platform_output.cursor_icon);
+            if let Some(cursor) = self
+                .binding
+                .cursor_icon_to_cursor(output.platform_output.cursor_icon)
+            {
+                cursor.set();
+            }
         }
 
         self.texture_delta = output.textures_delta;
