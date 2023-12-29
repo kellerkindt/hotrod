@@ -149,9 +149,9 @@ impl World2dTerrainPipeline {
         Sampler::new(
             device,
             SamplerCreateInfo {
-                mag_filter: Filter::Linear,
-                min_filter: Filter::Linear,
-                mipmap_mode: SamplerMipmapMode::Linear,
+                mag_filter: Filter::Nearest,
+                min_filter: Filter::Nearest,
+                mipmap_mode: SamplerMipmapMode::Nearest,
                 ..Default::default()
             },
         )
