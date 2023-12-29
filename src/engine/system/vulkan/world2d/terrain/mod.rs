@@ -210,7 +210,6 @@ impl World2dTerrainPipeline {
 
             builder
                 .bind_pipeline_graphics(Arc::clone(&self.pipeline))?
-                .bind_index_buffer(self.quad_index_buffer.clone())?
                 .bind_descriptor_sets(
                     PipelineBindPoint::Graphics,
                     Arc::clone(&self.pipeline.layout()),
@@ -218,8 +217,11 @@ impl World2dTerrainPipeline {
                     Arc::clone(&terrain.texture.0.descriptor),
                 )?
                 .bind_index_buffer(self.quad_index_buffer.clone())?
-                .bind_vertex_buffers(0, vertex_buffer)?
-                .draw_indexed(6, terrain.tiles.len() as u32, 0, 0, 0)?;
+                .bind_vertex_buffers(0, vertex_buffer)?;
+
+            for offset in 0..terrain.tiles.len() {
+                builder.draw_indexed(6, 1, 0, offset as i32 * 4, 0)?;
+            }
 
             Ok(())
         } else {
