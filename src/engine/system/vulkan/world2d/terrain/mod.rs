@@ -1,21 +1,20 @@
-use crate::engine::system::vulkan::system::{VulkanSystem, WriteDescriptorSetCollection};
-use crate::engine::system::vulkan::utils::pipeline::{
-    subpass_from_renderpass, write_descriptor_sets_from_collection,
-};
-use crate::engine::system::vulkan::{DrawError, PipelineCreateError, ShaderLoadError, UploadError};
-use crate::shader_from_path;
 use bytemuck::{Pod, Zeroable};
+use std::borrow::Cow;
 use std::sync::Arc;
-use vulkano::buffer::{Buffer, BufferAllocateError, BufferCreateInfo, BufferUsage, Subbuffer};
+use vulkano::buffer::{
+    Buffer, BufferAllocateError, BufferCreateInfo, BufferUsage, IndexBuffer, Subbuffer,
+};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, CopyBufferToImageInfo};
 use vulkano::descriptor_set::allocator::StandardDescriptorSetAllocator;
 use vulkano::descriptor_set::{PersistentDescriptorSet, WriteDescriptorSet};
-use vulkano::device::{Device, Features};
+use vulkano::device::Device;
 use vulkano::format::Format;
 use vulkano::image::sampler::{Filter, Sampler, SamplerCreateInfo, SamplerMipmapMode};
 use vulkano::image::view::ImageView;
 use vulkano::image::{Image, ImageAllocateError, ImageCreateInfo, ImageType, ImageUsage};
-use vulkano::memory::allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator};
+use vulkano::memory::allocator::{
+    AllocationCreateInfo, MemoryAllocator, MemoryTypeFilter, StandardMemoryAllocator,
+};
 use vulkano::pipeline::cache::PipelineCache;
 use vulkano::pipeline::graphics::color_blend::{AttachmentBlend, ColorBlendState};
 use vulkano::pipeline::graphics::input_assembly::{InputAssemblyState, PrimitiveTopology};
@@ -32,17 +31,30 @@ use vulkano::render_pass::RenderPass;
 use vulkano::shader::EntryPoint;
 use vulkano::{Validated, VulkanError};
 
+use crate::engine::system::vulkan::system::{VulkanSystem, WriteDescriptorSetCollection};
+use crate::engine::system::vulkan::textures::{TextureId, TextureInner};
+use crate::engine::system::vulkan::utils::pipeline::{
+    subpass_from_renderpass, write_descriptor_sets_from_collection,
+};
+use crate::engine::system::vulkan::{DrawError, PipelineCreateError, ShaderLoadError, UploadError};
+use crate::engine::types::world2d::{Dim, Pos};
+use crate::shader_from_path;
+
+/// This pipeline is used to draw the terrain of 2d worlds. A 2d world terrain consists of quadratic
+/// tiles. It supports additional features besides painting the terrain like:
+///  - shading a terrain tile
 #[derive()]
-pub struct TexturesPipeline {
+pub struct World2dTerrainPipeline {
     pipeline: Arc<GraphicsPipeline>,
     desc_allocator: StandardDescriptorSetAllocator,
     memo_allocator: StandardMemoryAllocator,
+    quad_index_buffer: IndexBuffer,
     texture_sampler: Arc<Sampler>,
     origin_marker: Arc<()>,
     write_descriptors: WriteDescriptorSetCollection,
 }
 
-impl TryFrom<&VulkanSystem> for TexturesPipeline {
+impl TryFrom<&VulkanSystem> for World2dTerrainPipeline {
     type Error = PipelineCreateError;
 
     fn try_from(vs: &VulkanSystem) -> Result<Self, Self::Error> {
@@ -55,25 +67,24 @@ impl TryFrom<&VulkanSystem> for TexturesPipeline {
     }
 }
 
-impl TexturesPipeline {
-    pub const REQUIRED_FEATURES: Features = Features {
-        dynamic_rendering: true,
-        ..Features::empty()
-    };
-
+impl World2dTerrainPipeline {
     pub fn new(
         device: Arc<Device>,
         render_pass: Arc<RenderPass>,
         cache: Option<Arc<PipelineCache>>,
         write_descriptors: WriteDescriptorSetCollection,
     ) -> Result<Self, PipelineCreateError> {
+        let pipeline = Self::create_pipeline(Arc::clone(&device), render_pass, cache)?;
+        let memo_allocator = StandardMemoryAllocator::new_default(Arc::clone(&device));
         Ok(Self {
-            pipeline: Self::create_pipeline(Arc::clone(&device), render_pass, cache)?,
             desc_allocator: StandardDescriptorSetAllocator::new(Arc::clone(&device)),
-            memo_allocator: StandardMemoryAllocator::new_default(Arc::clone(&device)),
             texture_sampler: Self::create_texture_sampler(device)?,
+            quad_index_buffer: Self::create_index_buffer(&memo_allocator, [0, 1, 2, 2, 3, 0])?
+                .into(),
             origin_marker: Arc::new(()),
             write_descriptors,
+            pipeline,
+            memo_allocator,
         })
     }
 
@@ -85,7 +96,8 @@ impl TexturesPipeline {
         let vs = Self::load_vertex_shader(Arc::clone(&device))?;
         let fs = Self::load_fragment_shader(Arc::clone(&device))?;
 
-        let vertex_input_state = Vertex2dUv::per_vertex().definition(&vs.info().input_interface)?;
+        let vertex_input_state =
+            VertexPos2d::per_vertex().definition(&vs.info().input_interface)?;
 
         let stages = [
             PipelineShaderStageCreateInfo::new(vs),
@@ -121,7 +133,7 @@ impl TexturesPipeline {
         shader_from_path!(
             device,
             "vertex",
-            "src/engine/system/vulkan/textures/textures.vert"
+            "src/engine/system/vulkan/world2d/terrain/terrain.vert"
         )
     }
 
@@ -129,7 +141,7 @@ impl TexturesPipeline {
         shader_from_path!(
             device,
             "fragment",
-            "src/engine/system/vulkan/textures/textures.frag"
+            "src/engine/system/vulkan/world2d/terrain/terrain.frag"
         )
     }
 
@@ -148,96 +160,83 @@ impl TexturesPipeline {
     pub fn draw<P>(
         &self,
         builder: &mut AutoCommandBufferBuilder<P>,
-        textured: &[Textured],
+        terrain: &World2dTerrain,
     ) -> Result<(), DrawError> {
-        let mut offset = 0;
-        let vertex_buffer = self.create_vertex_buffer(
-            textured
-                .iter()
-                .flat_map(|l| l.vertices.iter().copied())
-                .collect::<Vec<_>>(),
-        )?;
+        if Arc::ptr_eq(&self.origin_marker, &terrain.texture.0.origin) {
+            let vertex_buffer = Self::create_vertex_buffer(
+                &self.memo_allocator,
+                terrain
+                    .tiles
+                    .iter()
+                    .flat_map(|tile| {
+                        [
+                            VertexPos2d {
+                                pos: [
+                                    tile.x - (0.5 * terrain.tile_size.x),
+                                    tile.y - (0.5 * terrain.tile_size.y),
+                                ],
+                                uv: [terrain.tile_uv[0].x, terrain.tile_uv[0].y],
+                                shading: terrain.shading[0],
+                            },
+                            VertexPos2d {
+                                pos: [
+                                    tile.x + (0.5 * terrain.tile_size.x),
+                                    tile.y - (0.5 * terrain.tile_size.y),
+                                ],
+                                uv: [terrain.tile_uv[1].x, terrain.tile_uv[0].y],
+                                shading: terrain.shading[1],
+                            },
+                            VertexPos2d {
+                                pos: [
+                                    tile.x + (0.5 * terrain.tile_size.x),
+                                    tile.y + (0.5 * terrain.tile_size.y),
+                                ],
+                                uv: [terrain.tile_uv[1].x, terrain.tile_uv[1].y],
+                                shading: terrain.shading[2],
+                            },
+                            VertexPos2d {
+                                pos: [
+                                    tile.x - (0.5 * terrain.tile_size.x),
+                                    tile.y + (0.5 * terrain.tile_size.y),
+                                ],
+                                uv: [terrain.tile_uv[0].x, terrain.tile_uv[1].y],
+                                shading: terrain.shading[3],
+                            },
+                        ]
+                        .into_iter()
+                    })
+                    .collect::<Vec<_>>(),
+            )?;
 
-        builder
-            .bind_pipeline_graphics(Arc::clone(&self.pipeline))?
-            .bind_vertex_buffers(0, vertex_buffer)?;
+            builder
+                .bind_pipeline_graphics(Arc::clone(&self.pipeline))?
+                .bind_index_buffer(self.quad_index_buffer.clone())?
+                .bind_descriptor_sets(
+                    PipelineBindPoint::Graphics,
+                    Arc::clone(&self.pipeline.layout()),
+                    0,
+                    Arc::clone(&terrain.texture.0.descriptor),
+                )?
+                .bind_index_buffer(self.quad_index_buffer.clone())?
+                .bind_vertex_buffers(0, vertex_buffer)?
+                .draw_indexed(6, terrain.tiles.len() as u32, 0, 0, 0)?;
 
-        for textured in textured {
-            if Arc::ptr_eq(&self.origin_marker, &textured.texture.0.origin) {
-                builder
-                    .bind_descriptor_sets(
-                        PipelineBindPoint::Graphics,
-                        Arc::clone(&self.pipeline.layout()),
-                        0,
-                        Arc::clone(&textured.texture.0.descriptor),
-                    )?
-                    .draw(textured.vertices.len() as u32, 1, offset, 0)?;
-            }
-
-            offset += textured.vertices.len() as u32;
+            Ok(())
+        } else {
+            todo!()
         }
-
-        Ok(())
-    }
-
-    pub fn draw_indexed<P>(
-        &self,
-        builder: &mut AutoCommandBufferBuilder<P>,
-        textured: &[TexturedIndexed],
-    ) -> Result<(), DrawError> {
-        let mut offset_vertices = 0;
-        let mut offset_indices = 0;
-
-        let vertex_buffer = self.create_vertex_buffer(
-            textured
-                .iter()
-                .flat_map(|l| l.vertices.iter().copied())
-                .collect::<Vec<_>>(),
-        )?;
-
-        let index_buffer = self.create_index_buffer(
-            textured
-                .iter()
-                .flat_map(|l| l.indices.iter().flat_map(|i| i.into_iter()).copied())
-                .collect::<Vec<_>>(),
-        )?;
-
-        builder
-            .bind_pipeline_graphics(Arc::clone(&self.pipeline))?
-            .bind_index_buffer(index_buffer)?
-            .bind_vertex_buffers(0, vertex_buffer)?;
-
-        for textured in textured {
-            let index_count = textured.indices.len() as u32 * 3;
-
-            if Arc::ptr_eq(&self.origin_marker, &textured.texture.0.origin) {
-                builder
-                    .bind_descriptor_sets(
-                        PipelineBindPoint::Graphics,
-                        Arc::clone(&self.pipeline.layout()),
-                        0,
-                        Arc::clone(&textured.texture.0.descriptor),
-                    )?
-                    .draw_indexed(index_count, 1, offset_indices, offset_vertices, 0)?;
-            }
-
-            offset_vertices += textured.vertices.len() as i32;
-            offset_indices += index_count;
-        }
-
-        Ok(())
     }
 
     fn create_vertex_buffer<I>(
-        &self,
+        memo_allocator: &impl MemoryAllocator,
         vertices: I,
-    ) -> Result<Subbuffer<[Vertex2dUv]>, Validated<BufferAllocateError>>
+    ) -> Result<Subbuffer<[VertexPos2d]>, Validated<BufferAllocateError>>
     where
-        I: IntoIterator<Item = Vertex2dUv>,
+        I: IntoIterator<Item = VertexPos2d>,
         I::IntoIter: ExactSizeIterator,
     {
         Buffer::from_iter(
-            &self.memo_allocator,
+            memo_allocator,
             BufferCreateInfo {
                 usage: BufferUsage::VERTEX_BUFFER,
                 ..BufferCreateInfo::default()
@@ -252,7 +251,7 @@ impl TexturesPipeline {
     }
 
     fn create_index_buffer<I>(
-        &self,
+        memo_allocator: &impl MemoryAllocator,
         indices: I,
     ) -> Result<Subbuffer<[u32]>, Validated<BufferAllocateError>>
     where
@@ -260,7 +259,7 @@ impl TexturesPipeline {
         I::IntoIter: ExactSizeIterator,
     {
         Buffer::from_iter(
-            &self.memo_allocator,
+            memo_allocator,
             BufferCreateInfo {
                 usage: BufferUsage::INDEX_BUFFER,
                 ..BufferCreateInfo::default()
@@ -371,29 +370,19 @@ impl TexturesPipeline {
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Zeroable, Pod, Vertex)]
-pub struct Vertex2dUv {
+pub struct VertexPos2d {
     #[format(R32G32_SFLOAT)]
-    pub pos: [f32; 2],
+    pos: [f32; 2],
     #[format(R32G32_SFLOAT)]
-    pub uv: [f32; 2],
+    uv: [f32; 2],
+    #[format(R32_SFLOAT)]
+    shading: f32,
 }
 
-pub struct Textured {
-    pub vertices: Vec<Vertex2dUv>,
+pub struct World2dTerrain<'a> {
     pub texture: TextureId,
-}
-
-pub struct TexturedIndexed {
-    pub vertices: Vec<Vertex2dUv>,
-    pub indices: Vec<[u32; 3]>,
-    pub texture: TextureId,
-}
-
-#[derive(Clone)]
-pub struct TextureId(pub Arc<TextureInner>);
-
-pub struct TextureInner {
-    pub origin: Arc<()>,
-    pub _image: Arc<Image>,
-    pub descriptor: Arc<PersistentDescriptorSet>,
+    pub tile_uv: [Dim<f32>; 2],
+    pub tile_size: Dim<f32>,
+    pub tiles: Cow<'a, [Pos<f32>]>,
+    pub shading: [f32; 4],
 }

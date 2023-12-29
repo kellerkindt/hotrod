@@ -1,4 +1,5 @@
 use crate::engine::system::vulkan::desc::binding_101_window_size::WindowSize;
+use crate::engine::system::vulkan::desc::binding_201_world_2d_view::World2dView;
 use crate::engine::system::vulkan::desc::WriteDescriptorSetOrigin;
 use crate::engine::system::vulkan::utils::pipeline::single_pass_render_pass_from_image_format;
 use crate::engine::system::vulkan::{DrawError, Error};
@@ -120,11 +121,13 @@ impl VulkanSystem {
     }
 
     fn init_write_descriptors(&mut self) -> Result<(), Error> {
-        self.write_descriptors =
-            [WindowSize::from(&*self).create_descriptor_set(&self.memo_allocator)?]
-                .into_iter()
-                .map(|desc| (desc.binding(), desc))
-                .collect();
+        self.write_descriptors = [
+            WindowSize::from(&*self).create_descriptor_set(&self.memo_allocator)?,
+            World2dView::from(&*self).create_descriptor_set(&self.memo_allocator)?,
+        ]
+        .into_iter()
+        .map(|desc| (desc.binding(), desc))
+        .collect();
         Ok(())
     }
 
@@ -241,6 +244,7 @@ impl VulkanSystem {
             renderpass: &self.render_pass,
             swapchain_framebuffer: &self.swapchain_framebuffers[swapchain_image_index as usize],
             command_buffer_allocator: &self.cmd_allocator,
+            write_descriptor_sets: &self.write_descriptors,
         };
 
         let mut prepare_commands: Vec<Arc<dyn SecondaryCommandBufferAbstract>> = Vec::new();
@@ -282,6 +286,7 @@ impl VulkanSystem {
             .begin_render_pass(
                 RenderPassBeginInfo {
                     clear_values: vec![Some([0.0, 0.5, 1.0, 1.0].into())],
+                    // clear_values: vec![Some([0.0, 0.0, 0.0, 1.0].into())],
                     ..RenderPassBeginInfo::framebuffer(Arc::clone(
                         &self.swapchain_framebuffers[swapchain_image_index as usize],
                     ))
@@ -478,6 +483,7 @@ pub struct RenderContext<'a> {
     renderpass: &'a Arc<RenderPass>,
     swapchain_framebuffer: &'a Arc<Framebuffer>,
     command_buffer_allocator: &'a StandardCommandBufferAllocator,
+    write_descriptor_sets: &'a WriteDescriptorSetCollection,
 }
 
 impl<'a> RenderContext<'a> {
@@ -534,5 +540,10 @@ impl<'a> RenderContext<'a> {
             )
             .expect("Using the Swapchain extents should never fail");
         Ok(secondary)
+    }
+
+    #[inline]
+    pub fn write_descriptor_set(&self, binding: u32) -> Option<&WriteDescriptorSet> {
+        self.write_descriptor_sets.get(&binding)
     }
 }

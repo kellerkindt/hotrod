@@ -15,6 +15,8 @@ pub mod pipelines;
 pub mod system;
 pub mod textures;
 pub mod triangles;
+#[cfg(feature = "world2d")]
+pub mod world2d;
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -82,6 +84,8 @@ pub enum PipelineCreateError {
     IntoPipelineLayoutCreateInfoError(#[from] IntoPipelineLayoutCreateInfoError),
     #[error("Failed to load at least one shader: {0}")]
     ShaderLoadError(#[from] ShaderLoadError),
+    #[error("Failed to init pipeline because of allocation error: {0}")]
+    PipelineInitErrorOnAllocation(#[from] Validated<BufferAllocateError>),
 }
 
 #[derive(thiserror::Error, Debug)]

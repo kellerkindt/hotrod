@@ -8,6 +8,7 @@ use vulkano::memory::allocator::{
 };
 
 pub mod binding_101_window_size;
+pub mod binding_201_world_2d_view;
 
 pub trait WriteDescriptorSetOrigin {
     type BufferContents: BufferContents;
