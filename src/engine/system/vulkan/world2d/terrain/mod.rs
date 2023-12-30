@@ -1,5 +1,4 @@
 use bytemuck::{Pod, Zeroable};
-use std::borrow::Cow;
 use std::sync::Arc;
 use vulkano::buffer::{
     Buffer, BufferAllocateError, BufferCreateInfo, BufferUsage, IndexBuffer, Subbuffer,
@@ -20,7 +19,7 @@ use vulkano::pipeline::graphics::color_blend::{AttachmentBlend, ColorBlendState}
 use vulkano::pipeline::graphics::input_assembly::{InputAssemblyState, PrimitiveTopology};
 use vulkano::pipeline::graphics::multisample::MultisampleState;
 use vulkano::pipeline::graphics::rasterization::{CullMode, RasterizationState};
-use vulkano::pipeline::graphics::vertex_input::{Vertex, VertexDefinition, VertexInputState};
+use vulkano::pipeline::graphics::vertex_input::{Vertex, VertexDefinition};
 use vulkano::pipeline::graphics::viewport::ViewportState;
 use vulkano::pipeline::graphics::GraphicsPipelineCreateInfo;
 use vulkano::pipeline::layout::PipelineDescriptorSetLayoutCreateInfo;
@@ -37,7 +36,6 @@ use crate::engine::system::vulkan::utils::pipeline::{
     subpass_from_renderpass, write_descriptor_sets_from_collection,
 };
 use crate::engine::system::vulkan::{DrawError, PipelineCreateError, ShaderLoadError, UploadError};
-use crate::engine::types::world2d::{Dim, Pos};
 use crate::shader_from_path;
 
 /// This pipeline is used to draw the terrain of 2d worlds. A 2d world terrain consists of quadratic
@@ -168,25 +166,19 @@ impl World2dTerrainPipeline {
         )
     }
 
-    pub fn draw<P>(
+    pub fn draw<P, I>(
         &self,
         builder: &mut AutoCommandBufferBuilder<P>,
-        terrain: &World2dTerrain,
-    ) -> Result<(), DrawError> {
-        if Arc::ptr_eq(&self.origin_marker, &terrain.texture.0.origin) {
-            let vertex_buffer = Self::create_vertex_buffer(
-                &self.memo_allocator,
-                terrain
-                    .tiles
-                    .iter()
-                    .map(|(tile, shading)| InstanceData {
-                        tile_pos: [tile.x, tile.y],
-                        uv0: terrain.tile_uv[0].into(),
-                        uv1: terrain.tile_uv[1].into(),
-                        shading: *shading,
-                    })
-                    .collect::<Vec<_>>(),
-            )?;
+        texture: &TextureId,
+        tiles: I,
+    ) -> Result<(), DrawError>
+    where
+        I: IntoIterator<Item = InstanceData>,
+        I::IntoIter: ExactSizeIterator,
+    {
+        if Arc::ptr_eq(&self.origin_marker, &texture.0.origin) {
+            let vertex_buffer = Self::create_vertex_buffer(&self.memo_allocator, tiles)?;
+            let instance_count = vertex_buffer.len() as u32;
 
             builder
                 .bind_pipeline_graphics(Arc::clone(&self.pipeline))?
@@ -194,17 +186,17 @@ impl World2dTerrainPipeline {
                     PipelineBindPoint::Graphics,
                     Arc::clone(&self.pipeline.layout()),
                     0,
-                    Arc::clone(&terrain.texture.0.descriptor),
+                    Arc::clone(&texture.0.descriptor),
                 )?
                 .bind_index_buffer(self.quad_index_buffer.clone())?
                 .bind_vertex_buffers(
                     0,
                     [
                         self.quad_vertex_buffer.as_bytes().clone(),
-                        vertex_buffer.as_bytes().clone(),
+                        vertex_buffer.into_bytes(),
                     ],
                 )?
-                .draw_indexed(6, terrain.tiles.len() as u32, 0, 0, 0)?;
+                .draw_indexed(6, instance_count, 0, 0, 0)?;
 
             Ok(())
         } else {
@@ -364,18 +356,11 @@ pub struct Vertex2d {
 #[derive(Debug, Clone, Copy, Zeroable, Pod, Vertex)]
 pub struct InstanceData {
     #[format(R32G32_SFLOAT)]
-    tile_pos: [f32; 2],
+    pub tile_pos: [f32; 2],
     #[format(R32G32_SFLOAT)]
-    uv0: [f32; 2],
+    pub uv0: [f32; 2],
     #[format(R32G32_SFLOAT)]
-    uv1: [f32; 2],
+    pub uv1: [f32; 2],
     #[format(R32_SFLOAT)]
-    shading: f32,
-}
-
-pub struct World2dTerrain<'a> {
-    pub texture: TextureId,
-    pub tile_uv: [Dim<f32>; 2],
-    pub tile_size: Dim<f32>,
-    pub tiles: Cow<'a, [(Pos<f32>, f32)]>,
+    pub shading: f32,
 }
