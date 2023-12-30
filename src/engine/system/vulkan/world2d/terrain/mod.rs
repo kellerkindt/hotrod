@@ -20,7 +20,7 @@ use vulkano::pipeline::graphics::color_blend::{AttachmentBlend, ColorBlendState}
 use vulkano::pipeline::graphics::input_assembly::{InputAssemblyState, PrimitiveTopology};
 use vulkano::pipeline::graphics::multisample::MultisampleState;
 use vulkano::pipeline::graphics::rasterization::{CullMode, RasterizationState};
-use vulkano::pipeline::graphics::vertex_input::{Vertex, VertexDefinition};
+use vulkano::pipeline::graphics::vertex_input::{Vertex, VertexDefinition, VertexInputState};
 use vulkano::pipeline::graphics::viewport::ViewportState;
 use vulkano::pipeline::graphics::GraphicsPipelineCreateInfo;
 use vulkano::pipeline::layout::PipelineDescriptorSetLayoutCreateInfo;
@@ -49,6 +49,7 @@ pub struct World2dTerrainPipeline {
     desc_allocator: StandardDescriptorSetAllocator,
     memo_allocator: StandardMemoryAllocator,
     quad_index_buffer: IndexBuffer,
+    quad_vertex_buffer: Subbuffer<[Vertex2d]>,
     texture_sampler: Arc<Sampler>,
     origin_marker: Arc<()>,
     write_descriptors: WriteDescriptorSetCollection,
@@ -81,6 +82,16 @@ impl World2dTerrainPipeline {
             texture_sampler: Self::create_texture_sampler(device)?,
             quad_index_buffer: Self::create_index_buffer(&memo_allocator, [0, 1, 2, 2, 3, 0])?
                 .into(),
+            quad_vertex_buffer: Self::create_vertex_buffer(
+                &memo_allocator,
+                vec![
+                    Vertex2d { pos: [-0.5, -0.5] },
+                    Vertex2d { pos: [0.5, -0.5] },
+                    Vertex2d { pos: [0.5, 0.5] },
+                    Vertex2d { pos: [-0.5, 0.5] },
+                ],
+            )?
+            .into(),
             origin_marker: Arc::new(()),
             write_descriptors,
             pipeline,
@@ -96,8 +107,8 @@ impl World2dTerrainPipeline {
         let vs = Self::load_vertex_shader(Arc::clone(&device))?;
         let fs = Self::load_fragment_shader(Arc::clone(&device))?;
 
-        let vertex_input_state =
-            VertexPos2d::per_vertex().definition(&vs.info().input_interface)?;
+        let vertex_input_state = [Vertex2d::per_vertex(), InstanceData::per_instance()]
+            .definition(&vs.info().input_interface)?;
 
         let stages = [
             PipelineShaderStageCreateInfo::new(vs),
@@ -168,42 +179,11 @@ impl World2dTerrainPipeline {
                 terrain
                     .tiles
                     .iter()
-                    .flat_map(|tile| {
-                        [
-                            VertexPos2d {
-                                pos: [
-                                    tile.x - (0.5 * terrain.tile_size.x),
-                                    tile.y - (0.5 * terrain.tile_size.y),
-                                ],
-                                uv: [terrain.tile_uv[0].x, terrain.tile_uv[0].y],
-                                shading: terrain.shading[0],
-                            },
-                            VertexPos2d {
-                                pos: [
-                                    tile.x + (0.5 * terrain.tile_size.x),
-                                    tile.y - (0.5 * terrain.tile_size.y),
-                                ],
-                                uv: [terrain.tile_uv[1].x, terrain.tile_uv[0].y],
-                                shading: terrain.shading[1],
-                            },
-                            VertexPos2d {
-                                pos: [
-                                    tile.x + (0.5 * terrain.tile_size.x),
-                                    tile.y + (0.5 * terrain.tile_size.y),
-                                ],
-                                uv: [terrain.tile_uv[1].x, terrain.tile_uv[1].y],
-                                shading: terrain.shading[2],
-                            },
-                            VertexPos2d {
-                                pos: [
-                                    tile.x - (0.5 * terrain.tile_size.x),
-                                    tile.y + (0.5 * terrain.tile_size.y),
-                                ],
-                                uv: [terrain.tile_uv[0].x, terrain.tile_uv[1].y],
-                                shading: terrain.shading[3],
-                            },
-                        ]
-                        .into_iter()
+                    .map(|(tile, shading)| InstanceData {
+                        tile_pos: [tile.x, tile.y],
+                        uv0: terrain.tile_uv[0].into(),
+                        uv1: terrain.tile_uv[1].into(),
+                        shading: *shading,
                     })
                     .collect::<Vec<_>>(),
             )?;
@@ -217,11 +197,14 @@ impl World2dTerrainPipeline {
                     Arc::clone(&terrain.texture.0.descriptor),
                 )?
                 .bind_index_buffer(self.quad_index_buffer.clone())?
-                .bind_vertex_buffers(0, vertex_buffer)?;
-
-            for offset in 0..terrain.tiles.len() {
-                builder.draw_indexed(6, 1, 0, offset as i32 * 4, 0)?;
-            }
+                .bind_vertex_buffers(
+                    0,
+                    [
+                        self.quad_vertex_buffer.as_bytes().clone(),
+                        vertex_buffer.as_bytes().clone(),
+                    ],
+                )?
+                .draw_indexed(6, terrain.tiles.len() as u32, 0, 0, 0)?;
 
             Ok(())
         } else {
@@ -229,12 +212,12 @@ impl World2dTerrainPipeline {
         }
     }
 
-    fn create_vertex_buffer<I>(
+    fn create_vertex_buffer<I, T: Send + Sync + Pod>(
         memo_allocator: &impl MemoryAllocator,
         vertices: I,
-    ) -> Result<Subbuffer<[VertexPos2d]>, Validated<BufferAllocateError>>
+    ) -> Result<Subbuffer<[T]>, Validated<BufferAllocateError>>
     where
-        I: IntoIterator<Item = VertexPos2d>,
+        I: IntoIterator<Item = T>,
         I::IntoIter: ExactSizeIterator,
     {
         Buffer::from_iter(
@@ -372,11 +355,20 @@ impl World2dTerrainPipeline {
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Zeroable, Pod, Vertex)]
-pub struct VertexPos2d {
+pub struct Vertex2d {
     #[format(R32G32_SFLOAT)]
     pos: [f32; 2],
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Zeroable, Pod, Vertex)]
+pub struct InstanceData {
     #[format(R32G32_SFLOAT)]
-    uv: [f32; 2],
+    tile_pos: [f32; 2],
+    #[format(R32G32_SFLOAT)]
+    uv0: [f32; 2],
+    #[format(R32G32_SFLOAT)]
+    uv1: [f32; 2],
     #[format(R32_SFLOAT)]
     shading: f32,
 }
@@ -385,6 +377,5 @@ pub struct World2dTerrain<'a> {
     pub texture: TextureId,
     pub tile_uv: [Dim<f32>; 2],
     pub tile_size: Dim<f32>,
-    pub tiles: Cow<'a, [Pos<f32>]>,
-    pub shading: [f32; 4],
+    pub tiles: Cow<'a, [(Pos<f32>, f32)]>,
 }
