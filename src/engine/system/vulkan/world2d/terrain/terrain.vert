@@ -17,8 +17,8 @@ layout(location = 1) out float out_shading;
 
 void main() {
     gl_Position = vec4(
-    2.0 * (view.position.x + (view.zoom * (pos.x + tile_pos.x))) / window.screen_size.x - 1.0,
-    2.0 * (view.position.y + (view.zoom * (pos.y + tile_pos.y))) / window.screen_size.y - 1.0,
+    2.0 * (((view.zoom * (pos.x + tile_pos.x - view.position.x))) / window.screen_size.x),
+    2.0 * (((view.zoom * (pos.y + tile_pos.y - view.position.y))) / window.screen_size.y),
     0.0,
     1.0
     );
