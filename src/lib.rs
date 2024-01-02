@@ -4,4 +4,5 @@ pub use vulkano;
 
 pub mod engine;
 pub mod logging;
+pub mod support;
 pub mod ui;
