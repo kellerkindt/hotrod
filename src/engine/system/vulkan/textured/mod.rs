@@ -1,20 +1,16 @@
 use crate::engine::system::vulkan::system::{VulkanSystem, WriteDescriptorSetCollection};
+use crate::engine::system::vulkan::textures::{ImageSamplerMode, TextureId, TextureManager};
 use crate::engine::system::vulkan::utils::pipeline::{
     subpass_from_renderpass, write_descriptor_sets_from_collection,
 };
-use crate::engine::system::vulkan::{DrawError, PipelineCreateError, ShaderLoadError, UploadError};
+use crate::engine::system::vulkan::{DrawError, PipelineCreateError, ShaderLoadError};
 use crate::shader_from_path;
 use bytemuck::{Pod, Zeroable};
 use std::sync::Arc;
 use vulkano::buffer::{Buffer, BufferAllocateError, BufferCreateInfo, BufferUsage, Subbuffer};
-use vulkano::command_buffer::{AutoCommandBufferBuilder, CopyBufferToImageInfo};
-use vulkano::descriptor_set::allocator::StandardDescriptorSetAllocator;
-use vulkano::descriptor_set::{PersistentDescriptorSet, WriteDescriptorSet};
+use vulkano::command_buffer::AutoCommandBufferBuilder;
 use vulkano::device::{Device, Features};
-use vulkano::format::Format;
-use vulkano::image::sampler::{Filter, Sampler, SamplerCreateInfo, SamplerMipmapMode};
-use vulkano::image::view::ImageView;
-use vulkano::image::{Image, ImageAllocateError, ImageCreateInfo, ImageType, ImageUsage};
+use vulkano::image::Image;
 use vulkano::memory::allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator};
 use vulkano::pipeline::cache::PipelineCache;
 use vulkano::pipeline::graphics::color_blend::{AttachmentBlend, ColorBlendState};
@@ -33,16 +29,14 @@ use vulkano::shader::EntryPoint;
 use vulkano::{Validated, VulkanError};
 
 #[derive()]
-pub struct TexturesPipeline {
+pub struct TexturedPipeline {
     pipeline: Arc<GraphicsPipeline>,
-    desc_allocator: StandardDescriptorSetAllocator,
     memo_allocator: StandardMemoryAllocator,
-    texture_sampler: Arc<Sampler>,
-    origin_marker: Arc<()>,
     write_descriptors: WriteDescriptorSetCollection,
+    texture_manager: TextureManager<Self, 0>,
 }
 
-impl TryFrom<&VulkanSystem> for TexturesPipeline {
+impl TryFrom<&VulkanSystem> for TexturedPipeline {
     type Error = PipelineCreateError;
 
     fn try_from(vs: &VulkanSystem) -> Result<Self, Self::Error> {
@@ -55,7 +49,7 @@ impl TryFrom<&VulkanSystem> for TexturesPipeline {
     }
 }
 
-impl TexturesPipeline {
+impl TexturedPipeline {
     pub const REQUIRED_FEATURES: Features = Features {
         dynamic_rendering: true,
         ..Features::empty()
@@ -67,13 +61,12 @@ impl TexturesPipeline {
         cache: Option<Arc<PipelineCache>>,
         write_descriptors: WriteDescriptorSetCollection,
     ) -> Result<Self, PipelineCreateError> {
+        let pipeline = Self::create_pipeline(Arc::clone(&device), render_pass, cache)?;
         Ok(Self {
-            pipeline: Self::create_pipeline(Arc::clone(&device), render_pass, cache)?,
-            desc_allocator: StandardDescriptorSetAllocator::new(Arc::clone(&device)),
             memo_allocator: StandardMemoryAllocator::new_default(Arc::clone(&device)),
-            texture_sampler: Self::create_texture_sampler(device)?,
-            origin_marker: Arc::new(()),
             write_descriptors,
+            texture_manager: TextureManager::basic(device, &pipeline, ImageSamplerMode::Linear)?,
+            pipeline,
         })
     }
 
@@ -133,18 +126,6 @@ impl TexturesPipeline {
         )
     }
 
-    fn create_texture_sampler(device: Arc<Device>) -> Result<Arc<Sampler>, Validated<VulkanError>> {
-        Sampler::new(
-            device,
-            SamplerCreateInfo {
-                mag_filter: Filter::Linear,
-                min_filter: Filter::Linear,
-                mipmap_mode: SamplerMipmapMode::Linear,
-                ..Default::default()
-            },
-        )
-    }
-
     pub fn draw<P>(
         &self,
         builder: &mut AutoCommandBufferBuilder<P>,
@@ -163,7 +144,7 @@ impl TexturesPipeline {
             .bind_vertex_buffers(0, vertex_buffer)?;
 
         for textured in textured {
-            if Arc::ptr_eq(&self.origin_marker, &textured.texture.0.origin) {
+            if self.texture_manager.is_origin_of(&textured.texture) {
                 builder
                     .bind_descriptor_sets(
                         PipelineBindPoint::Graphics,
@@ -210,7 +191,7 @@ impl TexturesPipeline {
         for textured in textured {
             let index_count = textured.indices.len() as u32 * 3;
 
-            if Arc::ptr_eq(&self.origin_marker, &textured.texture.0.origin) {
+            if self.texture_manager.is_origin_of(&textured.texture) {
                 builder
                     .bind_descriptor_sets(
                         PipelineBindPoint::Graphics,
@@ -274,98 +255,17 @@ impl TexturesPipeline {
         )
     }
 
-    pub fn create_texture<P>(
+    pub fn prepare_texture(
         &self,
-        builder: &mut AutoCommandBufferBuilder<P>,
-        rgba: Vec<u8>,
-        width: u32,
-        height: u32,
-    ) -> Result<TextureId, UploadError> {
-        let (image, descriptor) = self.create_image_desc(width, height)?;
-        self.upload_image(builder, Arc::clone(&image), rgba)?;
-        Ok(TextureId(Arc::new(TextureInner {
-            origin: Arc::clone(&self.origin_marker),
-            _image: image,
-            descriptor,
-        })))
-    }
-
-    fn create_image_desc(
-        &self,
-        width: u32,
-        height: u32,
-    ) -> Result<(Arc<Image>, Arc<PersistentDescriptorSet>), UploadError> {
-        let image = self.create_image(width, height)?;
-        let layout = &self.pipeline.layout().set_layouts()[0];
-
-        match PersistentDescriptorSet::new(
-            &self.desc_allocator,
-            Arc::clone(&layout),
-            [WriteDescriptorSet::image_view_sampler(
-                0,
-                ImageView::new_default(Arc::clone(&image))?,
-                Arc::clone(&self.texture_sampler),
-            )]
-            .into_iter()
-            .chain(write_descriptor_sets_from_collection(
-                layout,
-                &self.write_descriptors,
-            )),
-            [],
-        ) {
-            Ok(desc) => Ok((image, desc)),
-            Err(e) => Err(e.into()),
-        }
-    }
-
-    fn create_image(
-        &self,
-        width: u32,
-        height: u32,
-    ) -> Result<Arc<Image>, Validated<ImageAllocateError>> {
-        Image::new(
-            &self.memo_allocator,
-            ImageCreateInfo {
-                image_type: ImageType::Dim2d,
-                format: Format::R8G8B8A8_SRGB,
-                extent: [width, height, 1],
-                usage: ImageUsage::TRANSFER_DST | ImageUsage::SAMPLED,
-                ..ImageCreateInfo::default()
-            },
-            AllocationCreateInfo {
-                memory_type_filter: MemoryTypeFilter::PREFER_DEVICE,
-                ..AllocationCreateInfo::default()
-            },
-        )
-    }
-
-    fn upload_image<P, I>(
-        &self,
-        builder: &mut AutoCommandBufferBuilder<P>,
         image: Arc<Image>,
-        rgba: I,
-    ) -> Result<(), Validated<BufferAllocateError>>
-    where
-        I: IntoIterator<Item = u8>,
-        I::IntoIter: ExactSizeIterator,
-    {
-        builder.copy_buffer_to_image(CopyBufferToImageInfo::buffer_image(
-            Buffer::from_iter(
-                &self.memo_allocator,
-                BufferCreateInfo {
-                    usage: BufferUsage::TRANSFER_SRC,
-                    ..BufferCreateInfo::default()
-                },
-                AllocationCreateInfo {
-                    memory_type_filter: MemoryTypeFilter::PREFER_HOST
-                        | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
-                    ..AllocationCreateInfo::default()
-                },
-                rgba,
-            )?,
+    ) -> Result<TextureId<Self>, Validated<VulkanError>> {
+        self.texture_manager.prepare_texture(
             image,
-        ))?;
-        Ok(())
+            write_descriptor_sets_from_collection(
+                &self.pipeline.layout().set_layouts()[0],
+                &self.write_descriptors,
+            ),
+        )
     }
 }
 
@@ -380,20 +280,11 @@ pub struct Vertex2dUv {
 
 pub struct Textured {
     pub vertices: Vec<Vertex2dUv>,
-    pub texture: TextureId,
+    pub texture: TextureId<TexturedPipeline>,
 }
 
 pub struct TexturedIndexed {
     pub vertices: Vec<Vertex2dUv>,
     pub indices: Vec<[u32; 3]>,
-    pub texture: TextureId,
-}
-
-#[derive(Clone)]
-pub struct TextureId(pub Arc<TextureInner>);
-
-pub struct TextureInner {
-    pub origin: Arc<()>,
-    pub _image: Arc<Image>,
-    pub descriptor: Arc<PersistentDescriptorSet>,
+    pub texture: TextureId<TexturedPipeline>,
 }

@@ -1,14 +1,14 @@
 use crate::engine::system::vulkan::beautiful_lines::BeautifulLinePipeline;
 use crate::engine::system::vulkan::lines::LinePipeline;
 use crate::engine::system::vulkan::system::VulkanSystem;
-use crate::engine::system::vulkan::textured::TexturesPipeline;
+use crate::engine::system::vulkan::textured::TexturedPipeline;
 use crate::engine::system::vulkan::triangles::TrianglesPipeline;
 use crate::engine::system::vulkan::world2d::terrain::World2dTerrainPipeline;
 use crate::engine::system::vulkan::PipelineCreateError;
 
 pub struct VulkanPipelines {
     pub line: LinePipeline,
-    pub texture: TexturesPipeline,
+    pub texture: TexturedPipeline,
     pub triangles: TrianglesPipeline,
     pub beautiful_line: BeautifulLinePipeline,
     pub world2d_terrain: World2dTerrainPipeline,
@@ -22,7 +22,7 @@ impl TryFrom<&VulkanSystem> for VulkanPipelines {
     fn try_from(vs: &VulkanSystem) -> Result<Self, Self::Error> {
         Ok(Self {
             line: LinePipeline::try_from(vs)?,
-            texture: TexturesPipeline::try_from(vs)?,
+            texture: TexturedPipeline::try_from(vs)?,
             triangles: TrianglesPipeline::try_from(vs)?,
             beautiful_line: BeautifulLinePipeline::try_from(vs)?,
             world2d_terrain: World2dTerrainPipeline::try_from(vs)?,

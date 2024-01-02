@@ -14,6 +14,7 @@ pub mod lines;
 pub mod pipelines;
 pub mod system;
 pub mod textured;
+pub mod textures;
 pub mod triangles;
 #[cfg(feature = "world2d")]
 pub mod world2d;

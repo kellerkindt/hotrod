@@ -1,6 +1,7 @@
 use crate::engine::system::vulkan::desc::binding_101_window_size::WindowSize;
 use crate::engine::system::vulkan::desc::binding_201_world_2d_view::World2dView;
 use crate::engine::system::vulkan::desc::WriteDescriptorSetOrigin;
+use crate::engine::system::vulkan::textures::ImageSystem;
 use crate::engine::system::vulkan::utils::pipeline::single_pass_render_pass_from_image_format;
 use crate::engine::system::vulkan::{DrawError, Error};
 use std::collections::HashMap;
@@ -50,6 +51,7 @@ pub struct VulkanSystem {
     memo_allocator: StandardMemoryAllocator,
     desc_allocator: StandardDescriptorSetAllocator,
     cmd_allocator: StandardCommandBufferAllocator,
+    image_system: Arc<ImageSystem>,
 }
 
 impl VulkanSystem {
@@ -93,6 +95,7 @@ impl VulkanSystem {
         .map_err(Error::FailedToCreateFramebuffers)?;
 
         Self {
+            image_system: Arc::new(ImageSystem::try_from(Arc::clone(&device))?),
             memo_allocator: StandardMemoryAllocator::new_default(Arc::clone(&device)),
             desc_allocator: StandardDescriptorSetAllocator::new(Arc::clone(&device)),
             cmd_allocator: StandardCommandBufferAllocator::new(
@@ -182,6 +185,11 @@ impl VulkanSystem {
     }
 
     #[inline]
+    pub fn image_system(&self) -> &Arc<ImageSystem> {
+        &self.image_system
+    }
+
+    #[inline]
     pub fn get_write_descriptor_sets(&self) -> &WriteDescriptorSetCollection {
         &self.write_descriptors
     }
@@ -245,6 +253,7 @@ impl VulkanSystem {
             swapchain_framebuffer: &self.swapchain_framebuffers[swapchain_image_index as usize],
             command_buffer_allocator: &self.cmd_allocator,
             write_descriptor_sets: &self.write_descriptors,
+            image_system: &self.image_system,
         };
 
         let mut prepare_commands: Vec<Arc<dyn SecondaryCommandBufferAbstract>> = Vec::new();
@@ -484,6 +493,7 @@ pub struct RenderContext<'a> {
     swapchain_framebuffer: &'a Arc<Framebuffer>,
     command_buffer_allocator: &'a StandardCommandBufferAllocator,
     write_descriptor_sets: &'a WriteDescriptorSetCollection,
+    image_system: &'a ImageSystem,
 }
 
 impl<'a> RenderContext<'a> {
@@ -545,5 +555,10 @@ impl<'a> RenderContext<'a> {
     #[inline]
     pub fn write_descriptor_set(&self, binding: u32) -> Option<&WriteDescriptorSet> {
         self.write_descriptor_sets.get(&binding)
+    }
+
+    #[inline]
+    pub fn image_system(&self) -> &ImageSystem {
+        self.image_system
     }
 }

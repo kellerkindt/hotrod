@@ -1,7 +1,8 @@
 use crate::engine::system::vulkan::lines::{Line, Vertex2d};
 use crate::engine::system::vulkan::pipelines::VulkanPipelines;
 use crate::engine::system::vulkan::system::RenderContext;
-use crate::engine::system::vulkan::textured::{TextureId, Textured, Vertex2dUv};
+use crate::engine::system::vulkan::textured::{Textured, TexturedPipeline, Vertex2dUv};
+use crate::engine::system::vulkan::textures::TextureId;
 use crate::engine::system::vulkan::triangles::Triangles;
 use crate::engine::system::vulkan::DrawError;
 use crate::engine::types::world2d::{Dim, Pos};
@@ -98,7 +99,7 @@ impl BufferedCanvasLayer {
         &mut self,
         pos: P,
         dim: D,
-        texture: TextureId,
+        texture: TextureId<TexturedPipeline>,
     ) {
         let pos = pos.into();
         let dim = dim.into();
@@ -119,7 +120,7 @@ impl BufferedCanvasLayer {
     pub fn draw_textured_triangles<P: Into<Pos<f32>>, U: Into<Uv<f32>>>(
         &mut self,
         pos_uv: impl Iterator<Item = (P, U)>,
-        texture: TextureId,
+        texture: TextureId<TexturedPipeline>,
     ) {
         self.sink.append(Textured {
             vertices: pos_uv

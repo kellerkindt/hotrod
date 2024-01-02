@@ -1,24 +1,26 @@
 use crate::engine::system::egui::EguiSystem;
 use crate::engine::system::vulkan::system::VulkanSystem;
+use crate::engine::system::vulkan::textures::{
+    ImageSamplerMode, ImageSystem, TextureId, TextureManager,
+};
 use crate::engine::system::vulkan::utils::pipeline::subpass_from_renderpass;
 use crate::engine::system::vulkan::{DrawError, PipelineCreateError, ShaderLoadError, UploadError};
 use crate::shader_from_path;
 use bytemuck::{Pod, Zeroable};
-use egui::{ClippedPrimitive, Color32, ImageData, Rect, TextureId, TextureOptions, TexturesDelta};
+use egui::{
+    ClippedPrimitive, Color32, ImageData, Rect, TextureId as EguiTextureId, TextureOptions,
+    TexturesDelta,
+};
 use nohash_hasher::NoHashHasher;
 use std::collections::HashMap;
 use std::hash::BuildHasherDefault;
 use std::ops::DerefMut;
 use std::sync::{Arc, RwLock};
 use vulkano::buffer::{Buffer, BufferAllocateError, BufferCreateInfo, BufferUsage, Subbuffer};
-use vulkano::command_buffer::{AutoCommandBufferBuilder, CopyBufferToImageInfo};
-use vulkano::descriptor_set::allocator::StandardDescriptorSetAllocator;
-use vulkano::descriptor_set::{PersistentDescriptorSet, WriteDescriptorSet};
+use vulkano::command_buffer::AutoCommandBufferBuilder;
 use vulkano::device::{Device, Queue};
-use vulkano::format::Format;
 use vulkano::image::sampler::{Filter, Sampler, SamplerCreateInfo, SamplerMipmapMode};
-use vulkano::image::view::ImageView;
-use vulkano::image::{Image, ImageAllocateError, ImageCreateInfo, ImageType, ImageUsage};
+use vulkano::image::{Image, ImageAllocateError};
 use vulkano::memory::allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator};
 use vulkano::pipeline::cache::PipelineCache;
 use vulkano::pipeline::graphics::color_blend::{
@@ -41,19 +43,22 @@ use vulkano::{Validated, VulkanError};
 use crate::ui::egui::epaint::{ImageDelta, Primitive};
 use crate::ui::egui::TextureFilter;
 
+type TextureSamplers = HashMap<TextureOptions, Arc<Sampler>>;
+
 struct Inner {
     pub textures:
-        HashMap<IdWrapper, Arc<PersistentDescriptorSet>, BuildHasherDefault<NoHashHasher<u64>>>,
-    pub textures_to_free: Vec<TextureId>,
+        HashMap<IdWrapper, TextureId<EguiPipeline>, BuildHasherDefault<NoHashHasher<u64>>>,
+    pub textures_to_free: Vec<EguiTextureId>,
     pub images: HashMap<IdWrapper, Arc<Image>, BuildHasherDefault<NoHashHasher<u64>>>,
-    pub texture_samplers: HashMap<TextureOptions, Arc<Sampler>>,
+    pub texture_samplers: TextureSamplers,
 }
 
 pub struct EguiPipeline {
     pub queue: Arc<Queue>,
     pub pipeline: Arc<GraphicsPipeline>,
-    pub desc_allocator: StandardDescriptorSetAllocator,
-    pub memo_allocator: StandardMemoryAllocator,
+    memo_allocator: StandardMemoryAllocator,
+    image_system: Arc<ImageSystem>,
+    texture_manager: TextureManager<Self, 0>,
     inner: RwLock<Inner>,
     device: Arc<Device>,
 }
@@ -67,6 +72,7 @@ impl TryFrom<&VulkanSystem> for EguiPipeline {
             Arc::clone(vs.queue()),
             Arc::clone(vs.render_pass()),
             vs.pipeline_cache().map(Arc::clone),
+            vs.image_system().clone(),
         )
     }
 }
@@ -77,19 +83,32 @@ impl EguiPipeline {
         queue: Arc<Queue>,
         render_pass: Arc<RenderPass>,
         cache: Option<Arc<PipelineCache>>,
+        image_system: Arc<ImageSystem>,
     ) -> Result<Self, PipelineCreateError> {
+        let pipeline = Self::create_pipeline(Arc::clone(&device), render_pass, cache)?;
+        let texture_manager =
+            TextureManager::basic(Arc::clone(&device), &pipeline, ImageSamplerMode::Linear)?;
         Ok(Self {
             queue,
-            desc_allocator: StandardDescriptorSetAllocator::new(Arc::clone(&device)),
             memo_allocator: StandardMemoryAllocator::new_default(Arc::clone(&device)),
-            pipeline: Self::create_pipeline(Arc::clone(&device), render_pass, cache)?,
             inner: RwLock::new(Inner {
                 textures: HashMap::default(),
                 textures_to_free: Vec::default(),
                 images: HashMap::default(),
-                texture_samplers: HashMap::default(),
+                texture_samplers: [(
+                    TextureOptions {
+                        magnification: TextureFilter::Linear,
+                        minification: TextureFilter::Linear,
+                    },
+                    Arc::clone(&texture_manager.sampler()),
+                )]
+                .into_iter()
+                .collect::<HashMap<_, _>>(),
             }),
             device,
+            image_system,
+            texture_manager,
+            pipeline,
         })
     }
 
@@ -208,7 +227,7 @@ impl EguiPipeline {
         let mut vertices = Vec::<AdapterVertex>::with_capacity(clipped_primitives.len() * 4);
         let mut indices = Vec::<u32>::with_capacity(clipped_primitives.len() * 6);
         let mut clip_rects = Vec::<Rect>::with_capacity(clipped_primitives.len());
-        let mut texture_ids = Vec::<TextureId>::with_capacity(clipped_primitives.len());
+        let mut texture_ids = Vec::<EguiTextureId>::with_capacity(clipped_primitives.len());
         let mut offsets = Vec::<(usize, usize)>::with_capacity(clipped_primitives.len());
 
         for clipped in clipped_primitives {
@@ -268,7 +287,7 @@ impl EguiPipeline {
                         PipelineBindPoint::Graphics,
                         Arc::clone(&self.pipeline.layout()),
                         0,
-                        Arc::clone(texture),
+                        Arc::clone(texture.descriptor()),
                     )?
                     .draw_indexed(
                         (offset_index_end - offset_index) as u32,
@@ -347,31 +366,9 @@ impl EguiPipeline {
             let texture_id = IdWrapper::from(*texture_id);
             let image = if delta.is_whole() {
                 let image = self.create_image(&delta.image)?;
-                let layout = &self.pipeline.layout().set_layouts()[0];
+                let texture = self.prepare_texture(&mut inner.texture_samplers, delta, &image)?;
 
-                let desc = PersistentDescriptorSet::new(
-                    &self.desc_allocator,
-                    Arc::clone(&layout),
-                    [WriteDescriptorSet::image_view_sampler(
-                        0,
-                        ImageView::new_default(Arc::clone(&image))?,
-                        Arc::clone(
-                            inner
-                                .texture_samplers
-                                .entry(delta.options.clone())
-                                .or_insert_with(|| {
-                                    Self::create_texture_sampler(
-                                        Arc::clone(&self.device),
-                                        delta.options.clone(),
-                                    )
-                                    .unwrap()
-                                }),
-                        ),
-                    )],
-                    [],
-                )?;
-
-                inner.textures.insert(texture_id, desc);
+                inner.textures.insert(texture_id, texture);
                 inner.images.insert(texture_id, Arc::clone(&image));
                 image
             } else {
@@ -384,21 +381,33 @@ impl EguiPipeline {
         Ok(())
     }
 
-    fn create_image(&self, image: &ImageData) -> Result<Arc<Image>, Validated<ImageAllocateError>> {
-        Image::new(
-            &self.memo_allocator,
-            ImageCreateInfo {
-                image_type: ImageType::Dim2d,
-                format: Format::R8G8B8A8_SRGB,
-                extent: [image.width() as u32, image.height() as u32, 1],
-                usage: ImageUsage::TRANSFER_DST | ImageUsage::SAMPLED,
-                ..ImageCreateInfo::default()
-            },
-            AllocationCreateInfo {
-                memory_type_filter: MemoryTypeFilter::PREFER_DEVICE,
-                ..AllocationCreateInfo::default()
-            },
+    fn prepare_texture(
+        &self,
+        texture_samplers: &mut TextureSamplers,
+        delta: &ImageDelta,
+        image: &Arc<Image>,
+    ) -> Result<TextureId<EguiPipeline>, Validated<VulkanError>> {
+        self.texture_manager.prepare_texture_with(
+            Arc::clone(&image),
+            Arc::clone(
+                texture_samplers
+                    .entry(delta.options.clone())
+                    .or_insert_with(|| {
+                        Self::create_texture_sampler(
+                            Arc::clone(&self.device),
+                            delta.options.clone(),
+                        )
+                        .unwrap()
+                    }),
+            ),
+            [].into_iter(),
         )
+    }
+
+    #[inline]
+    fn create_image(&self, image: &ImageData) -> Result<Arc<Image>, Validated<ImageAllocateError>> {
+        self.image_system
+            .create_image(image.width() as u32, image.height() as u32)
     }
 
     fn upload_image_or_delta<P>(
@@ -407,43 +416,27 @@ impl EguiPipeline {
         delta: &ImageDelta,
         builder: &mut AutoCommandBufferBuilder<P>,
     ) -> Result<(), Validated<BufferAllocateError>> {
-        builder.copy_buffer_to_image({
-            let mut copy_info = CopyBufferToImageInfo::buffer_image(
-                Buffer::from_iter(
-                    &self.memo_allocator,
-                    BufferCreateInfo {
-                        usage: BufferUsage::TRANSFER_SRC,
-                        ..BufferCreateInfo::default()
-                    },
-                    AllocationCreateInfo {
-                        memory_type_filter: MemoryTypeFilter::PREFER_HOST
-                            | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
-                        ..AllocationCreateInfo::default()
-                    },
-                    match &delta.image {
-                        ImageData::Color(color_data) => color_data
-                            .pixels
-                            .iter()
-                            .flat_map(Color32::to_array)
-                            .collect::<Vec<_>>(),
-                        ImageData::Font(font_data) => font_data
-                            .srgba_pixels(None) // TODO
-                            .flat_map(|c| c.to_array())
-                            .collect::<Vec<_>>(),
-                    },
-                )?,
-                image,
-            );
-
-            if !delta.is_whole() {
-                copy_info.regions[0].image_offset[0] = delta.pos.unwrap_or_default()[0] as u32;
-                copy_info.regions[0].image_offset[1] = delta.pos.unwrap_or_default()[1] as u32;
-                copy_info.regions[0].image_extent[0] = delta.image.width() as u32;
-                copy_info.regions[0].image_extent[1] = delta.image.height() as u32;
-            }
-
-            copy_info
-        })?;
+        self.image_system.update_image(
+            builder,
+            image,
+            delta.pos.map(|[x, y]| {
+                (
+                    [x as u32, y as u32],
+                    [delta.image.width() as u32, delta.image.height() as u32],
+                )
+            }),
+            match &delta.image {
+                ImageData::Color(color_data) => color_data
+                    .pixels
+                    .iter()
+                    .flat_map(Color32::to_array)
+                    .collect::<Vec<_>>(),
+                ImageData::Font(font_data) => font_data
+                    .srgba_pixels(None) // TODO
+                    .flat_map(|c| c.to_array())
+                    .collect::<Vec<_>>(),
+            },
+        )?;
 
         Ok(())
     }
@@ -474,14 +467,14 @@ impl From<&egui::epaint::Vertex> for AdapterVertex {
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 struct IdWrapper(u64);
 
-impl From<TextureId> for IdWrapper {
-    fn from(value: TextureId) -> Self {
+impl From<EguiTextureId> for IdWrapper {
+    fn from(value: EguiTextureId) -> Self {
         match value {
-            TextureId::Managed(id) | TextureId::User(id) if id.leading_zeros() == 0 => {
+            EguiTextureId::Managed(id) | EguiTextureId::User(id) if id.leading_zeros() == 0 => {
                 panic!("First bit of the texture id is reserved for user texture flag!")
             }
-            TextureId::Managed(id) => Self(id),
-            TextureId::User(id) => Self(id | 1_u64.rotate_right(1)),
+            EguiTextureId::Managed(id) => Self(id),
+            EguiTextureId::User(id) => Self(id | 1_u64.rotate_right(1)),
         }
     }
 }
