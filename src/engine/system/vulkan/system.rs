@@ -1,3 +1,4 @@
+use crate::engine::system::vulkan::buffers::BasicBuffersManager;
 use crate::engine::system::vulkan::desc::binding_101_window_size::WindowSize;
 use crate::engine::system::vulkan::desc::binding_201_world_2d_view::World2dView;
 use crate::engine::system::vulkan::desc::WriteDescriptorSetOrigin;
@@ -15,6 +16,7 @@ use vulkano::command_buffer::{
     SecondaryAutoCommandBuffer, SecondaryCommandBufferAbstract, SubpassBeginInfo, SubpassContents,
     SubpassEndInfo,
 };
+use vulkano::descriptor_set::allocator::StandardDescriptorSetAllocator;
 use vulkano::descriptor_set::WriteDescriptorSet;
 use vulkano::device::physical::{PhysicalDevice, PhysicalDeviceType};
 use vulkano::device::{
@@ -22,7 +24,7 @@ use vulkano::device::{
 };
 use vulkano::image::view::ImageView;
 use vulkano::image::{Image, ImageUsage};
-use vulkano::memory::allocator::{MemoryAllocator, StandardMemoryAllocator};
+use vulkano::memory::allocator::StandardMemoryAllocator;
 use vulkano::pipeline::cache::PipelineCache;
 use vulkano::pipeline::graphics::viewport::Viewport;
 use vulkano::render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass, Subpass};
@@ -43,9 +45,9 @@ pub struct VulkanSystem {
     swapchain_is_new: bool,
     previous_frame_end: Option<Box<dyn GpuFuture>>,
     write_descriptors: Arc<WriteDescriptorSetManager>,
-    memo_allocator: StandardMemoryAllocator,
     cmd_allocator: StandardCommandBufferAllocator,
     image_system: Arc<ImageSystem>,
+    basic_buffers_manager: Arc<BasicBuffersManager>,
 }
 
 impl VulkanSystem {
@@ -89,8 +91,12 @@ impl VulkanSystem {
         .map_err(Error::FailedToCreateFramebuffers)?;
 
         Self {
-            image_system: Arc::new(ImageSystem::try_from(Arc::clone(&device))?),
-            memo_allocator: StandardMemoryAllocator::new_default(Arc::clone(&device)),
+            image_system: Arc::new(ImageSystem::new(Arc::new(
+                StandardMemoryAllocator::new_default(Arc::clone(&device)),
+            ))?),
+            basic_buffers_manager: Arc::new(BasicBuffersManager::new(Arc::new(
+                StandardMemoryAllocator::new_default(Arc::clone(&device)),
+            ))),
             cmd_allocator: StandardCommandBufferAllocator::new(
                 Arc::clone(&device),
                 Default::default(),
@@ -104,7 +110,10 @@ impl VulkanSystem {
             swapchain,
             swapchain_images,
             render_pass,
-            write_descriptors: Arc::new(WriteDescriptorSetManager::new(Arc::clone(&device))),
+            write_descriptors: Arc::new(WriteDescriptorSetManager::new(
+                Arc::new(StandardDescriptorSetAllocator::new(Arc::clone(&device))),
+                Arc::new(StandardMemoryAllocator::new_default(Arc::clone(&device))),
+            )),
             device,
         }
         .with_write_descriptors_initialized()
@@ -118,7 +127,10 @@ impl VulkanSystem {
 
     fn init_write_descriptors(&mut self) -> Result<(), Error> {
         // clone to not re-create allocators
-        let mut write_descriptor = WriteDescriptorSetManager::clone(&*self.write_descriptors);
+        let mut write_descriptor = WriteDescriptorSetManager::new(
+            Arc::clone(self.write_descriptors.descriptor_set_allocator()),
+            Arc::clone(self.write_descriptors.memory_allocator()),
+        );
 
         write_descriptor.insert(WindowSize::from(&*self))?;
         write_descriptor.insert(World2dView::from(&*self))?;
@@ -158,11 +170,6 @@ impl VulkanSystem {
     }
 
     #[inline]
-    pub fn memory_allocator(&self) -> &impl MemoryAllocator {
-        &self.memo_allocator
-    }
-
-    #[inline]
     pub fn pipeline_cache(&self) -> Option<&Arc<PipelineCache>> {
         eprintln!("NO PipelineCache configured!");
         None
@@ -176,6 +183,11 @@ impl VulkanSystem {
     #[inline]
     pub fn write_descriptor_set_manager(&self) -> &Arc<WriteDescriptorSetManager> {
         &self.write_descriptors
+    }
+
+    #[inline]
+    pub fn basic_buffers_manager(&self) -> &Arc<BasicBuffersManager> {
+        &self.basic_buffers_manager
     }
 
     #[inline]

@@ -5,16 +5,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use vulkano::command_buffer::allocator::CommandBufferAllocator;
 use vulkano::command_buffer::AutoCommandBufferBuilder;
-use vulkano::descriptor_set::allocator::{
-    DescriptorSetAllocator, StandardDescriptorSetAlloc, StandardDescriptorSetAllocator,
-};
+use vulkano::descriptor_set::allocator::StandardDescriptorSetAllocator;
 use vulkano::descriptor_set::layout::DescriptorSetLayout;
 use vulkano::descriptor_set::{PersistentDescriptorSet, WriteDescriptorSet};
-use vulkano::device::Device;
 use vulkano::memory::allocator::StandardMemoryAllocator;
 use vulkano::{Validated, VulkanError};
 
-#[derive(Clone)]
 pub struct WriteDescriptorSetManager {
     desc_allocator: Arc<StandardDescriptorSetAllocator>,
     memo_allocator: Arc<StandardMemoryAllocator>,
@@ -22,19 +18,25 @@ pub struct WriteDescriptorSetManager {
 }
 
 impl WriteDescriptorSetManager {
-    pub fn new(device: Arc<Device>) -> Self {
+    pub fn new(
+        desc_allocator: Arc<StandardDescriptorSetAllocator>,
+        memo_allocator: Arc<StandardMemoryAllocator>,
+    ) -> Self {
         Self {
-            desc_allocator: Arc::new(StandardDescriptorSetAllocator::new(Arc::clone(&device))),
-            memo_allocator: Arc::new(StandardMemoryAllocator::new_default(device)),
+            desc_allocator,
+            memo_allocator,
             write_descriptor_sets: HashMap::default(),
         }
     }
 
     #[inline]
-    pub fn descriptor_set_allocator(
-        &self,
-    ) -> &impl DescriptorSetAllocator<Alloc = StandardDescriptorSetAlloc> {
+    pub fn descriptor_set_allocator(&self) -> &Arc<StandardDescriptorSetAllocator> {
         &self.desc_allocator
+    }
+
+    #[inline]
+    pub fn memory_allocator(&self) -> &Arc<StandardMemoryAllocator> {
+        &self.memo_allocator
     }
 
     #[inline]

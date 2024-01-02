@@ -1,3 +1,4 @@
+use crate::engine::system::vulkan::buffers::BasicBuffersManager;
 use crate::engine::system::vulkan::system::VulkanSystem;
 use crate::engine::system::vulkan::textures::{ImageSamplerMode, TextureId, TextureManager};
 use crate::engine::system::vulkan::utils::pipeline::subpass_from_renderpass;
@@ -6,15 +7,10 @@ use crate::engine::system::vulkan::{DrawError, PipelineCreateError, ShaderLoadEr
 use crate::shader_from_path;
 use bytemuck::{Pod, Zeroable};
 use std::sync::Arc;
-use vulkano::buffer::{
-    Buffer, BufferAllocateError, BufferCreateInfo, BufferUsage, IndexBuffer, Subbuffer,
-};
+use vulkano::buffer::{IndexBuffer, Subbuffer};
 use vulkano::command_buffer::AutoCommandBufferBuilder;
 use vulkano::device::Device;
 use vulkano::image::Image;
-use vulkano::memory::allocator::{
-    AllocationCreateInfo, MemoryAllocator, MemoryTypeFilter, StandardMemoryAllocator,
-};
 use vulkano::pipeline::cache::PipelineCache;
 use vulkano::pipeline::graphics::color_blend::{AttachmentBlend, ColorBlendState};
 use vulkano::pipeline::graphics::input_assembly::{InputAssemblyState, PrimitiveTopology};
@@ -37,7 +33,7 @@ use vulkano::{Validated, VulkanError};
 #[derive()]
 pub struct World2dTerrainPipeline {
     pipeline: Arc<GraphicsPipeline>,
-    memo_allocator: StandardMemoryAllocator,
+    buffers_manager: Arc<BasicBuffersManager>,
     quad_index_buffer: IndexBuffer,
     quad_vertex_buffer: Subbuffer<[Vertex2d]>,
     write_descriptors: Arc<WriteDescriptorSetManager>,
@@ -53,7 +49,8 @@ impl TryFrom<&VulkanSystem> for World2dTerrainPipeline {
             Arc::clone(vs.device()),
             Arc::clone(vs.render_pass()),
             vs.pipeline_cache().map(Arc::clone),
-            vs.write_descriptor_set_manager().clone(),
+            Arc::clone(vs.write_descriptor_set_manager()),
+            Arc::clone(vs.basic_buffers_manager()),
         )
     }
 }
@@ -64,24 +61,23 @@ impl World2dTerrainPipeline {
         render_pass: Arc<RenderPass>,
         cache: Option<Arc<PipelineCache>>,
         write_descriptors: Arc<WriteDescriptorSetManager>,
+        buffers_manager: Arc<BasicBuffersManager>,
     ) -> Result<Self, PipelineCreateError> {
         let pipeline = Self::create_pipeline(Arc::clone(&device), render_pass, cache)?;
-        let memo_allocator = StandardMemoryAllocator::new_default(Arc::clone(&device));
         Ok(Self {
-            quad_index_buffer: Self::create_index_buffer(&memo_allocator, [0, 1, 2, 2, 3, 0])?
+            quad_index_buffer: buffers_manager
+                .create_index_buffer([0, 1, 2, 2, 3, 0])?
                 .into(),
-            quad_vertex_buffer: Self::create_vertex_buffer(
-                &memo_allocator,
-                vec![
+            quad_vertex_buffer: buffers_manager
+                .create_vertex_buffer(vec![
                     Vertex2d { pos: [-0.5, -0.5] },
                     Vertex2d { pos: [0.5, -0.5] },
                     Vertex2d { pos: [0.5, 0.5] },
                     Vertex2d { pos: [-0.5, 0.5] },
-                ],
-            )?
-            .into(),
+                ])?
+                .into(),
             write_descriptors,
-            memo_allocator,
+            buffers_manager,
             texture_manager: TextureManager::basic(
                 device,
                 &pipeline,
@@ -159,7 +155,7 @@ impl World2dTerrainPipeline {
         I::IntoIter: ExactSizeIterator,
     {
         if self.texture_manager.is_origin_of(texture) {
-            let vertex_buffer = Self::create_vertex_buffer(&self.memo_allocator, tiles)?;
+            let vertex_buffer = self.buffers_manager.create_vertex_buffer(tiles)?;
             let instance_count = vertex_buffer.len() as u32;
 
             builder
@@ -184,52 +180,6 @@ impl World2dTerrainPipeline {
         } else {
             todo!()
         }
-    }
-
-    fn create_vertex_buffer<I, T: Send + Sync + Pod>(
-        memo_allocator: &impl MemoryAllocator,
-        vertices: I,
-    ) -> Result<Subbuffer<[T]>, Validated<BufferAllocateError>>
-    where
-        I: IntoIterator<Item = T>,
-        I::IntoIter: ExactSizeIterator,
-    {
-        Buffer::from_iter(
-            memo_allocator,
-            BufferCreateInfo {
-                usage: BufferUsage::VERTEX_BUFFER,
-                ..BufferCreateInfo::default()
-            },
-            AllocationCreateInfo {
-                memory_type_filter: MemoryTypeFilter::PREFER_DEVICE
-                    | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
-                ..AllocationCreateInfo::default()
-            },
-            vertices,
-        )
-    }
-
-    fn create_index_buffer<I>(
-        memo_allocator: &impl MemoryAllocator,
-        indices: I,
-    ) -> Result<Subbuffer<[u32]>, Validated<BufferAllocateError>>
-    where
-        I: IntoIterator<Item = u32>,
-        I::IntoIter: ExactSizeIterator,
-    {
-        Buffer::from_iter(
-            memo_allocator,
-            BufferCreateInfo {
-                usage: BufferUsage::INDEX_BUFFER,
-                ..BufferCreateInfo::default()
-            },
-            AllocationCreateInfo {
-                memory_type_filter: MemoryTypeFilter::PREFER_DEVICE
-                    | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
-                ..AllocationCreateInfo::default()
-            },
-            indices,
-        )
     }
 
     pub fn prepare_texture(

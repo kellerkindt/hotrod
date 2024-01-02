@@ -1,3 +1,4 @@
+use crate::engine::system::vulkan::buffers::BasicBuffersManager;
 use crate::engine::system::vulkan::system::VulkanSystem;
 use crate::engine::system::vulkan::textures::{ImageSamplerMode, TextureId, TextureManager};
 use crate::engine::system::vulkan::utils::pipeline::subpass_from_renderpass;
@@ -6,11 +7,9 @@ use crate::engine::system::vulkan::{DrawError, PipelineCreateError, ShaderLoadEr
 use crate::shader_from_path;
 use bytemuck::{Pod, Zeroable};
 use std::sync::Arc;
-use vulkano::buffer::{Buffer, BufferAllocateError, BufferCreateInfo, BufferUsage, Subbuffer};
 use vulkano::command_buffer::AutoCommandBufferBuilder;
 use vulkano::device::{Device, Features};
 use vulkano::image::Image;
-use vulkano::memory::allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator};
 use vulkano::pipeline::cache::PipelineCache;
 use vulkano::pipeline::graphics::color_blend::{AttachmentBlend, ColorBlendState};
 use vulkano::pipeline::graphics::input_assembly::{InputAssemblyState, PrimitiveTopology};
@@ -30,9 +29,9 @@ use vulkano::{Validated, VulkanError};
 #[derive()]
 pub struct TexturedPipeline {
     pipeline: Arc<GraphicsPipeline>,
-    memo_allocator: StandardMemoryAllocator,
     write_descriptors: Arc<WriteDescriptorSetManager>,
     texture_manager: TextureManager<Self, 0>,
+    buffers_manager: Arc<BasicBuffersManager>,
 }
 
 impl TryFrom<&VulkanSystem> for TexturedPipeline {
@@ -43,7 +42,8 @@ impl TryFrom<&VulkanSystem> for TexturedPipeline {
             Arc::clone(vs.device()),
             Arc::clone(vs.render_pass()),
             vs.pipeline_cache().map(Arc::clone),
-            vs.write_descriptor_set_manager().clone(),
+            Arc::clone(vs.write_descriptor_set_manager()),
+            Arc::clone(vs.basic_buffers_manager()),
         )
     }
 }
@@ -59,10 +59,11 @@ impl TexturedPipeline {
         render_pass: Arc<RenderPass>,
         cache: Option<Arc<PipelineCache>>,
         write_descriptors: Arc<WriteDescriptorSetManager>,
+        buffers_manager: Arc<BasicBuffersManager>,
     ) -> Result<Self, PipelineCreateError> {
         let pipeline = Self::create_pipeline(Arc::clone(&device), render_pass, cache)?;
         Ok(Self {
-            memo_allocator: StandardMemoryAllocator::new_default(Arc::clone(&device)),
+            buffers_manager,
             write_descriptors,
             texture_manager: TextureManager::basic(device, &pipeline, ImageSamplerMode::Linear)?,
             pipeline,
@@ -131,7 +132,7 @@ impl TexturedPipeline {
         textured: &[Textured],
     ) -> Result<(), DrawError> {
         let mut offset = 0;
-        let vertex_buffer = self.create_vertex_buffer(
+        let vertex_buffer = self.buffers_manager.create_vertex_buffer(
             textured
                 .iter()
                 .flat_map(|l| l.vertices.iter().copied())
@@ -168,14 +169,14 @@ impl TexturedPipeline {
         let mut offset_vertices = 0;
         let mut offset_indices = 0;
 
-        let vertex_buffer = self.create_vertex_buffer(
+        let vertex_buffer = self.buffers_manager.create_vertex_buffer(
             textured
                 .iter()
                 .flat_map(|l| l.vertices.iter().copied())
                 .collect::<Vec<_>>(),
         )?;
 
-        let index_buffer = self.create_index_buffer(
+        let index_buffer = self.buffers_manager.create_index_buffer(
             textured
                 .iter()
                 .flat_map(|l| l.indices.iter().flat_map(|i| i.into_iter()).copied())
@@ -206,52 +207,6 @@ impl TexturedPipeline {
         }
 
         Ok(())
-    }
-
-    fn create_vertex_buffer<I>(
-        &self,
-        vertices: I,
-    ) -> Result<Subbuffer<[Vertex2dUv]>, Validated<BufferAllocateError>>
-    where
-        I: IntoIterator<Item = Vertex2dUv>,
-        I::IntoIter: ExactSizeIterator,
-    {
-        Buffer::from_iter(
-            &self.memo_allocator,
-            BufferCreateInfo {
-                usage: BufferUsage::VERTEX_BUFFER,
-                ..BufferCreateInfo::default()
-            },
-            AllocationCreateInfo {
-                memory_type_filter: MemoryTypeFilter::PREFER_DEVICE
-                    | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
-                ..AllocationCreateInfo::default()
-            },
-            vertices,
-        )
-    }
-
-    fn create_index_buffer<I>(
-        &self,
-        indices: I,
-    ) -> Result<Subbuffer<[u32]>, Validated<BufferAllocateError>>
-    where
-        I: IntoIterator<Item = u32>,
-        I::IntoIter: ExactSizeIterator,
-    {
-        Buffer::from_iter(
-            &self.memo_allocator,
-            BufferCreateInfo {
-                usage: BufferUsage::INDEX_BUFFER,
-                ..BufferCreateInfo::default()
-            },
-            AllocationCreateInfo {
-                memory_type_filter: MemoryTypeFilter::PREFER_DEVICE
-                    | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
-                ..AllocationCreateInfo::default()
-            },
-            indices,
-        )
     }
 
     pub fn prepare_texture(

@@ -1,3 +1,4 @@
+use crate::engine::system::vulkan::buffers::BasicBuffersManager;
 use crate::engine::system::vulkan::system::VulkanSystem;
 use crate::engine::system::vulkan::utils::pipeline::subpass_from_renderpass;
 use crate::engine::system::vulkan::wds::WriteDescriptorSetManager;
@@ -5,11 +6,9 @@ use crate::engine::system::vulkan::{DrawError, PipelineCreateError, ShaderLoadEr
 use crate::shader_from_path;
 use bytemuck::{Pod, Zeroable};
 use std::sync::Arc;
-use vulkano::buffer::{Buffer, BufferAllocateError, BufferCreateInfo, BufferUsage, Subbuffer};
 use vulkano::command_buffer::AutoCommandBufferBuilder;
 use vulkano::descriptor_set::PersistentDescriptorSet;
 use vulkano::device::{Device, Features};
-use vulkano::memory::allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator};
 use vulkano::pipeline::cache::PipelineCache;
 use vulkano::pipeline::graphics::color_blend::{AttachmentBlend, ColorBlendState};
 use vulkano::pipeline::graphics::input_assembly::{InputAssemblyState, PrimitiveTopology};
@@ -24,12 +23,11 @@ use vulkano::pipeline::{
 };
 use vulkano::render_pass::RenderPass;
 use vulkano::shader::EntryPoint;
-use vulkano::Validated;
 
 #[derive()]
 pub struct TrianglesPipeline {
     pipeline: Arc<GraphicsPipeline>,
-    memo_allocator: StandardMemoryAllocator,
+    buffers_manager: Arc<BasicBuffersManager>,
     descriptor_set: Arc<PersistentDescriptorSet>,
 }
 
@@ -43,6 +41,7 @@ impl TryFrom<&VulkanSystem> for TrianglesPipeline {
             Arc::clone(vs.render_pass()),
             vs.pipeline_cache().map(Arc::clone),
             vs.write_descriptor_set_manager(),
+            Arc::clone(vs.basic_buffers_manager()),
         )
     }
 }
@@ -58,13 +57,14 @@ impl TrianglesPipeline {
         render_pass: Arc<RenderPass>,
         cache: Option<Arc<PipelineCache>>,
         write_descriptors: &WriteDescriptorSetManager,
+        buffers_manager: Arc<BasicBuffersManager>,
     ) -> Result<Self, PipelineCreateError> {
         let pipeline = Self::create_pipeline(Arc::clone(&device), render_pass, cache)?;
         Ok(Self {
             descriptor_set: write_descriptors
                 .create_persistent_descriptor_set(&pipeline.layout().set_layouts()[0])?,
             pipeline,
-            memo_allocator: StandardMemoryAllocator::new_default(Arc::clone(&device)),
+            buffers_manager,
         })
     }
 
@@ -131,7 +131,7 @@ impl TrianglesPipeline {
     ) -> Result<(), DrawError> {
         let mut offset = 0;
 
-        let vertex_buffer = self.create_vertex_buffer(
+        let vertex_buffer = self.buffers_manager.create_vertex_buffer(
             triangles
                 .iter()
                 .flat_map(|l| l.vertices.iter().copied())
@@ -175,14 +175,14 @@ impl TrianglesPipeline {
         let mut offset_vertices = 0;
         let mut offset_indices = 0;
 
-        let vertex_buffer = self.create_vertex_buffer(
+        let vertex_buffer = self.buffers_manager.create_vertex_buffer(
             triangles
                 .iter()
                 .flat_map(|l| l.vertices.iter().copied())
                 .collect::<Vec<_>>(),
         )?;
 
-        let index_buffer = self.create_index_buffer(
+        let index_buffer = self.buffers_manager.create_index_buffer(
             triangles
                 .iter()
                 .flat_map(|l| l.indices.iter().flat_map(|i| i.into_iter()).copied())
@@ -221,52 +221,6 @@ impl TrianglesPipeline {
         }
 
         Ok(())
-    }
-
-    fn create_vertex_buffer<I>(
-        &self,
-        vertices: I,
-    ) -> Result<Subbuffer<[Vertex2d]>, Validated<BufferAllocateError>>
-    where
-        I: IntoIterator<Item = Vertex2d>,
-        I::IntoIter: ExactSizeIterator,
-    {
-        Buffer::from_iter(
-            &self.memo_allocator,
-            BufferCreateInfo {
-                usage: BufferUsage::VERTEX_BUFFER,
-                ..BufferCreateInfo::default()
-            },
-            AllocationCreateInfo {
-                memory_type_filter: MemoryTypeFilter::PREFER_DEVICE
-                    | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
-                ..AllocationCreateInfo::default()
-            },
-            vertices,
-        )
-    }
-
-    fn create_index_buffer<I>(
-        &self,
-        indices: I,
-    ) -> Result<Subbuffer<[u32]>, Validated<BufferAllocateError>>
-    where
-        I: IntoIterator<Item = u32>,
-        I::IntoIter: ExactSizeIterator,
-    {
-        Buffer::from_iter(
-            &self.memo_allocator,
-            BufferCreateInfo {
-                usage: BufferUsage::INDEX_BUFFER,
-                ..BufferCreateInfo::default()
-            },
-            AllocationCreateInfo {
-                memory_type_filter: MemoryTypeFilter::PREFER_DEVICE
-                    | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
-                ..AllocationCreateInfo::default()
-            },
-            indices,
-        )
     }
 }
 

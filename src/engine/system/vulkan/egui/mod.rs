@@ -1,4 +1,5 @@
 use crate::engine::system::egui::EguiSystem;
+use crate::engine::system::vulkan::buffers::BasicBuffersManager;
 use crate::engine::system::vulkan::system::VulkanSystem;
 use crate::engine::system::vulkan::textures::{
     ImageSamplerMode, ImageSystem, TextureId, TextureManager,
@@ -16,12 +17,11 @@ use std::collections::HashMap;
 use std::hash::BuildHasherDefault;
 use std::ops::DerefMut;
 use std::sync::{Arc, RwLock};
-use vulkano::buffer::{Buffer, BufferAllocateError, BufferCreateInfo, BufferUsage, Subbuffer};
+use vulkano::buffer::BufferAllocateError;
 use vulkano::command_buffer::AutoCommandBufferBuilder;
 use vulkano::device::{Device, Queue};
 use vulkano::image::sampler::{Filter, Sampler, SamplerCreateInfo, SamplerMipmapMode};
 use vulkano::image::{Image, ImageAllocateError};
-use vulkano::memory::allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator};
 use vulkano::pipeline::cache::PipelineCache;
 use vulkano::pipeline::graphics::color_blend::{
     AttachmentBlend, BlendFactor, BlendOp, ColorBlendState,
@@ -56,7 +56,7 @@ struct Inner {
 pub struct EguiPipeline {
     pub queue: Arc<Queue>,
     pub pipeline: Arc<GraphicsPipeline>,
-    memo_allocator: StandardMemoryAllocator,
+    buffers_manager: Arc<BasicBuffersManager>,
     image_system: Arc<ImageSystem>,
     texture_manager: TextureManager<Self, 0>,
     inner: RwLock<Inner>,
@@ -72,7 +72,8 @@ impl TryFrom<&VulkanSystem> for EguiPipeline {
             Arc::clone(vs.queue()),
             Arc::clone(vs.render_pass()),
             vs.pipeline_cache().map(Arc::clone),
-            vs.image_system().clone(),
+            Arc::clone(vs.basic_buffers_manager()),
+            Arc::clone(vs.image_system()),
         )
     }
 }
@@ -83,6 +84,7 @@ impl EguiPipeline {
         queue: Arc<Queue>,
         render_pass: Arc<RenderPass>,
         cache: Option<Arc<PipelineCache>>,
+        buffers_manager: Arc<BasicBuffersManager>,
         image_system: Arc<ImageSystem>,
     ) -> Result<Self, PipelineCreateError> {
         let pipeline = Self::create_pipeline(Arc::clone(&device), render_pass, cache)?;
@@ -90,7 +92,6 @@ impl EguiPipeline {
             TextureManager::basic(Arc::clone(&device), &pipeline, ImageSamplerMode::Linear)?;
         Ok(Self {
             queue,
-            memo_allocator: StandardMemoryAllocator::new_default(Arc::clone(&device)),
             inner: RwLock::new(Inner {
                 textures: HashMap::default(),
                 textures_to_free: Vec::default(),
@@ -106,6 +107,7 @@ impl EguiPipeline {
                 .collect::<HashMap<_, _>>(),
             }),
             device,
+            buffers_manager,
             image_system,
             texture_manager,
             pipeline,
@@ -258,7 +260,8 @@ impl EguiPipeline {
 
         offsets.push((vertices.len(), indices.len()));
 
-        let (vertex_buffer, index_buffer) = self.create_buffers(vertices, indices)?;
+        let vertex_buffer = self.buffers_manager.create_vertex_buffer(vertices)?;
+        let index_buffer = self.buffers_manager.create_index_buffer(indices)?;
 
         builder
             //.next_subpass(SubpassContents::Inline)?
@@ -311,45 +314,6 @@ impl EguiPipeline {
             inner.textures.remove(&texture);
             inner.images.remove(&texture);
         }
-    }
-
-    fn create_buffers<V, I>(
-        &self,
-        vertices: V,
-        indices: I,
-    ) -> Result<(Subbuffer<[AdapterVertex]>, Subbuffer<[u32]>), Validated<BufferAllocateError>>
-    where
-        V: IntoIterator<Item = AdapterVertex>,
-        V::IntoIter: ExactSizeIterator,
-        I: IntoIterator<Item = u32>,
-        I::IntoIter: ExactSizeIterator,
-    {
-        let allocation_info = AllocationCreateInfo {
-            memory_type_filter: MemoryTypeFilter::PREFER_DEVICE
-                | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
-            ..AllocationCreateInfo::default()
-        };
-
-        Ok((
-            Buffer::from_iter(
-                &self.memo_allocator,
-                BufferCreateInfo {
-                    usage: BufferUsage::VERTEX_BUFFER,
-                    ..BufferCreateInfo::default()
-                },
-                allocation_info.clone(),
-                vertices,
-            )?,
-            Buffer::from_iter(
-                &self.memo_allocator,
-                BufferCreateInfo {
-                    usage: BufferUsage::INDEX_BUFFER,
-                    ..BufferCreateInfo::default()
-                },
-                allocation_info,
-                indices,
-            )?,
-        ))
     }
 
     fn update_textures<P>(

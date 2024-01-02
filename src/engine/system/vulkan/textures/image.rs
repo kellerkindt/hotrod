@@ -2,28 +2,17 @@ use crate::engine::system::vulkan::{PipelineCreateError, UploadError};
 use std::sync::Arc;
 use vulkano::buffer::{Buffer, BufferAllocateError, BufferCreateInfo, BufferUsage};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, CopyBufferToImageInfo};
-use vulkano::device::Device;
 use vulkano::format::Format;
 use vulkano::image::{Image, ImageAllocateError, ImageCreateInfo, ImageType, ImageUsage};
 use vulkano::memory::allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator};
 use vulkano::Validated;
 
 pub struct ImageSystem {
-    memo_allocator: StandardMemoryAllocator,
-}
-
-impl TryFrom<Arc<Device>> for ImageSystem {
-    type Error = PipelineCreateError;
-
-    #[inline]
-    fn try_from(device: Arc<Device>) -> Result<Self, Self::Error> {
-        Self::new(device)
-    }
+    memo_allocator: Arc<StandardMemoryAllocator>,
 }
 
 impl ImageSystem {
-    pub fn new(device: Arc<Device>) -> Result<Self, PipelineCreateError> {
-        let memo_allocator = StandardMemoryAllocator::new_default(device);
+    pub fn new(memo_allocator: Arc<StandardMemoryAllocator>) -> Result<Self, PipelineCreateError> {
         Ok(Self { memo_allocator })
     }
 
