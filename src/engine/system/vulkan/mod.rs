@@ -13,7 +13,7 @@ pub mod fps;
 pub mod lines;
 pub mod pipelines;
 pub mod system;
-pub mod textures;
+pub mod textured;
 pub mod triangles;
 #[cfg(feature = "world2d")]
 pub mod world2d;

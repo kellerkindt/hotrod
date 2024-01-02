@@ -1,7 +1,7 @@
 use crate::engine::system::vulkan::beautiful_lines::BeautifulLinePipeline;
 use crate::engine::system::vulkan::lines::LinePipeline;
 use crate::engine::system::vulkan::system::VulkanSystem;
-use crate::engine::system::vulkan::textures::TexturesPipeline;
+use crate::engine::system::vulkan::textured::TexturesPipeline;
 use crate::engine::system::vulkan::triangles::TrianglesPipeline;
 use crate::engine::system::vulkan::world2d::terrain::World2dTerrainPipeline;
 use crate::engine::system::vulkan::PipelineCreateError;

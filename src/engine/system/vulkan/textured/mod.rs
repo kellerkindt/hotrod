@@ -121,7 +121,7 @@ impl TexturesPipeline {
         shader_from_path!(
             device,
             "vertex",
-            "src/engine/system/vulkan/textures/textures.vert"
+            "src/engine/system/vulkan/textured/textured.vert"
         )
     }
 
@@ -129,7 +129,7 @@ impl TexturesPipeline {
         shader_from_path!(
             device,
             "fragment",
-            "src/engine/system/vulkan/textures/textures.frag"
+            "src/engine/system/vulkan/textured/textured.frag"
         )
     }
 

@@ -31,7 +31,7 @@ use vulkano::shader::EntryPoint;
 use vulkano::{Validated, VulkanError};
 
 use crate::engine::system::vulkan::system::{VulkanSystem, WriteDescriptorSetCollection};
-use crate::engine::system::vulkan::textures::{TextureId, TextureInner};
+use crate::engine::system::vulkan::textured::{TextureId, TextureInner};
 use crate::engine::system::vulkan::utils::pipeline::{
     subpass_from_renderpass, write_descriptor_sets_from_collection,
 };

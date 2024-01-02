@@ -1,7 +1,7 @@
 use crate::engine::system::vulkan::lines::{Line, Vertex2d};
 use crate::engine::system::vulkan::pipelines::VulkanPipelines;
 use crate::engine::system::vulkan::system::RenderContext;
-use crate::engine::system::vulkan::textures::{TextureId, Textured, Vertex2dUv};
+use crate::engine::system::vulkan::textured::{TextureId, Textured, Vertex2dUv};
 use crate::engine::system::vulkan::triangles::Triangles;
 use crate::engine::system::vulkan::DrawError;
 use crate::engine::types::world2d::{Dim, Pos};

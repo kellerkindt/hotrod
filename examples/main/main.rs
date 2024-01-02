@@ -1,6 +1,6 @@
 use hotrod::engine::system::canvas::buffered_layer::BufferedCanvasLayer;
 use hotrod::engine::system::vulkan::beautiful_lines::{BeautifulLine, Vertex2d};
-use hotrod::engine::system::vulkan::textures::{Textured, TexturedIndexed, Vertex2dUv};
+use hotrod::engine::system::vulkan::textured::{Textured, TexturedIndexed, Vertex2dUv};
 use hotrod::engine::system::vulkan::triangles::{Triangles, TrianglesIndexed};
 use hotrod::engine::types::world2d::{Dim, Pos};
 use hotrod::engine::Engine;
