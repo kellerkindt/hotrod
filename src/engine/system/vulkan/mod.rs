@@ -16,6 +16,7 @@ pub mod system;
 pub mod textured;
 pub mod textures;
 pub mod triangles;
+pub mod wds;
 #[cfg(feature = "world2d")]
 pub mod world2d;
 

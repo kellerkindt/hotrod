@@ -1,8 +1,4 @@
-use crate::engine::system::vulkan::system::WriteDescriptorSetCollection;
 use std::sync::Arc;
-use vulkano::descriptor_set::allocator::{DescriptorSetAllocator, StandardDescriptorSetAlloc};
-use vulkano::descriptor_set::layout::DescriptorSetLayout;
-use vulkano::descriptor_set::{PersistentDescriptorSet, WriteDescriptorSet};
 use vulkano::device::Device;
 use vulkano::format::Format;
 use vulkano::pipeline::graphics::subpass::PipelineSubpassType;
@@ -37,28 +33,4 @@ pub fn single_pass_render_pass_from_image_format(
             depth_stencil: {},
         }
     )
-}
-
-pub fn create_persistent_descriptor_set_from_collection(
-    layout: &Arc<DescriptorSetLayout>,
-    allocator: &impl DescriptorSetAllocator<Alloc = StandardDescriptorSetAlloc>,
-    write_descriptors: &WriteDescriptorSetCollection,
-) -> Result<Arc<PersistentDescriptorSet>, Validated<VulkanError>> {
-    PersistentDescriptorSet::new(
-        allocator,
-        Arc::clone(layout),
-        write_descriptor_sets_from_collection(layout, write_descriptors),
-        [],
-    )
-}
-
-#[inline]
-pub fn write_descriptor_sets_from_collection<'a>(
-    layout: &'a DescriptorSetLayout,
-    write_descriptors: &'a WriteDescriptorSetCollection,
-) -> impl Iterator<Item = WriteDescriptorSet> + 'a {
-    layout
-        .bindings()
-        .keys()
-        .flat_map(|binding| write_descriptors.get(binding).cloned())
 }

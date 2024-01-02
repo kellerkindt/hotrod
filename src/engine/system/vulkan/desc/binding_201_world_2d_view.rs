@@ -1,10 +1,11 @@
 use crate::engine::system::vulkan::desc::WriteDescriptorSetOrigin;
 use crate::engine::system::vulkan::system::VulkanSystem;
 
+#[derive(Debug, Copy, Clone)]
 pub struct World2dView {
-    x: f32,
-    y: f32,
-    zoom: f32,
+    pub x: f32,
+    pub y: f32,
+    pub zoom: f32,
 }
 
 impl From<[f32; 3]> for World2dView {

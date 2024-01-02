@@ -3,8 +3,9 @@ use crate::engine::system::vulkan::desc::binding_201_world_2d_view::World2dView;
 use crate::engine::system::vulkan::desc::WriteDescriptorSetOrigin;
 use crate::engine::system::vulkan::textures::ImageSystem;
 use crate::engine::system::vulkan::utils::pipeline::single_pass_render_pass_from_image_format;
+use crate::engine::system::vulkan::wds::WriteDescriptorSetManager;
 use crate::engine::system::vulkan::{DrawError, Error};
-use std::collections::HashMap;
+use std::borrow::Borrow;
 use std::sync::Arc;
 use std::time::Duration;
 use vulkano::command_buffer::allocator::{CommandBufferAllocator, StandardCommandBufferAllocator};
@@ -13,9 +14,6 @@ use vulkano::command_buffer::{
     CommandBufferInheritanceRenderPassType, CommandBufferUsage, RenderPassBeginInfo,
     SecondaryAutoCommandBuffer, SecondaryCommandBufferAbstract, SubpassBeginInfo, SubpassContents,
     SubpassEndInfo,
-};
-use vulkano::descriptor_set::allocator::{
-    DescriptorSetAllocator, StandardDescriptorSetAlloc, StandardDescriptorSetAllocator,
 };
 use vulkano::descriptor_set::WriteDescriptorSet;
 use vulkano::device::physical::{PhysicalDevice, PhysicalDeviceType};
@@ -34,9 +32,6 @@ use vulkano::swapchain::{
 use vulkano::sync::GpuFuture;
 use vulkano::{Validated, Version, VulkanError};
 
-pub type WriteDescriptorSetCollection =
-    HashMap<u32, WriteDescriptorSet, nohash_hasher::BuildNoHashHasher<u32>>;
-
 pub struct VulkanSystem {
     device: Arc<Device>,
     queue: Arc<Queue>,
@@ -47,9 +42,8 @@ pub struct VulkanSystem {
     recreate_swapchain: bool,
     swapchain_is_new: bool,
     previous_frame_end: Option<Box<dyn GpuFuture>>,
-    write_descriptors: WriteDescriptorSetCollection,
+    write_descriptors: Arc<WriteDescriptorSetManager>,
     memo_allocator: StandardMemoryAllocator,
-    desc_allocator: StandardDescriptorSetAllocator,
     cmd_allocator: StandardCommandBufferAllocator,
     image_system: Arc<ImageSystem>,
 }
@@ -97,7 +91,6 @@ impl VulkanSystem {
         Self {
             image_system: Arc::new(ImageSystem::try_from(Arc::clone(&device))?),
             memo_allocator: StandardMemoryAllocator::new_default(Arc::clone(&device)),
-            desc_allocator: StandardDescriptorSetAllocator::new(Arc::clone(&device)),
             cmd_allocator: StandardCommandBufferAllocator::new(
                 Arc::clone(&device),
                 Default::default(),
@@ -106,13 +99,13 @@ impl VulkanSystem {
             recreate_swapchain: false,
             swapchain_is_new: false,
             previous_frame_end: Some(vulkano::sync::now(Arc::clone(&device)).boxed()),
-            device,
             swapchain_framebuffers: create_framebuffers(&swapchain_images, &render_pass)
                 .map_err(Error::FailedToCreateFramebuffers)?,
             swapchain,
             swapchain_images,
             render_pass,
-            write_descriptors: WriteDescriptorSetCollection::default(),
+            write_descriptors: Arc::new(WriteDescriptorSetManager::new(Arc::clone(&device))),
+            device,
         }
         .with_write_descriptors_initialized()
     }
@@ -124,13 +117,13 @@ impl VulkanSystem {
     }
 
     fn init_write_descriptors(&mut self) -> Result<(), Error> {
-        self.write_descriptors = [
-            WindowSize::from(&*self).create_descriptor_set(&self.memo_allocator)?,
-            World2dView::from(&*self).create_descriptor_set(&self.memo_allocator)?,
-        ]
-        .into_iter()
-        .map(|desc| (desc.binding(), desc))
-        .collect();
+        // clone to not re-create allocators
+        let mut write_descriptor = WriteDescriptorSetManager::clone(&*self.write_descriptors);
+
+        write_descriptor.insert(WindowSize::from(&*self))?;
+        write_descriptor.insert(World2dView::from(&*self))?;
+
+        self.write_descriptors = Arc::new(write_descriptor);
         Ok(())
     }
 
@@ -138,10 +131,8 @@ impl VulkanSystem {
         &self,
         cmds: &mut AutoCommandBufferBuilder<T, A>,
     ) -> Result<(), Error> {
-        let window_size = WindowSize::from(&*self);
-        if let Some(current) = self.write_descriptors.get(&window_size.binding()) {
-            window_size.update(cmds, current)?;
-        }
+        self.write_descriptors
+            .update(cmds, WindowSize::from(self))?;
 
         Ok(())
     }
@@ -172,13 +163,6 @@ impl VulkanSystem {
     }
 
     #[inline]
-    pub fn descriptor_set_allocator(
-        &self,
-    ) -> &impl DescriptorSetAllocator<Alloc = StandardDescriptorSetAlloc> {
-        &self.desc_allocator
-    }
-
-    #[inline]
     pub fn pipeline_cache(&self) -> Option<&Arc<PipelineCache>> {
         eprintln!("NO PipelineCache configured!");
         None
@@ -190,12 +174,12 @@ impl VulkanSystem {
     }
 
     #[inline]
-    pub fn get_write_descriptor_sets(&self) -> &WriteDescriptorSetCollection {
+    pub fn write_descriptor_set_manager(&self) -> &Arc<WriteDescriptorSetManager> {
         &self.write_descriptors
     }
 
     #[inline]
-    pub fn recreatee_swapchain(&mut self) {
+    pub fn recreate_swapchain(&mut self) {
         self.recreate_swapchain = true;
     }
 
@@ -252,7 +236,7 @@ impl VulkanSystem {
             renderpass: &self.render_pass,
             swapchain_framebuffer: &self.swapchain_framebuffers[swapchain_image_index as usize],
             command_buffer_allocator: &self.cmd_allocator,
-            write_descriptor_sets: &self.write_descriptors,
+            write_descriptor_set_manager: &self.write_descriptors,
             image_system: &self.image_system,
         };
 
@@ -492,7 +476,7 @@ pub struct RenderContext<'a> {
     renderpass: &'a Arc<RenderPass>,
     swapchain_framebuffer: &'a Arc<Framebuffer>,
     command_buffer_allocator: &'a StandardCommandBufferAllocator,
-    write_descriptor_sets: &'a WriteDescriptorSetCollection,
+    write_descriptor_set_manager: &'a WriteDescriptorSetManager,
     image_system: &'a ImageSystem,
 }
 
@@ -553,8 +537,16 @@ impl<'a> RenderContext<'a> {
     }
 
     #[inline]
-    pub fn write_descriptor_set(&self, binding: u32) -> Option<&WriteDescriptorSet> {
-        self.write_descriptor_sets.get(&binding)
+    pub fn update_write_descriptor_set<
+        T,
+        A: CommandBufferAllocator,
+        W: WriteDescriptorSetOrigin,
+    >(
+        &self,
+        cmds: &mut AutoCommandBufferBuilder<T, A>,
+        origin: impl Borrow<W>,
+    ) -> Result<Option<&WriteDescriptorSet>, Error> {
+        self.write_descriptor_set_manager.update(cmds, origin)
     }
 
     #[inline]

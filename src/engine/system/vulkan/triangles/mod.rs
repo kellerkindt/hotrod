@@ -1,14 +1,12 @@
-use crate::engine::system::vulkan::system::{VulkanSystem, WriteDescriptorSetCollection};
-use crate::engine::system::vulkan::utils::pipeline::{
-    create_persistent_descriptor_set_from_collection, subpass_from_renderpass,
-};
+use crate::engine::system::vulkan::system::VulkanSystem;
+use crate::engine::system::vulkan::utils::pipeline::subpass_from_renderpass;
+use crate::engine::system::vulkan::wds::WriteDescriptorSetManager;
 use crate::engine::system::vulkan::{DrawError, PipelineCreateError, ShaderLoadError};
 use crate::shader_from_path;
 use bytemuck::{Pod, Zeroable};
 use std::sync::Arc;
 use vulkano::buffer::{Buffer, BufferAllocateError, BufferCreateInfo, BufferUsage, Subbuffer};
 use vulkano::command_buffer::AutoCommandBufferBuilder;
-use vulkano::descriptor_set::allocator::{DescriptorSetAllocator, StandardDescriptorSetAlloc};
 use vulkano::descriptor_set::PersistentDescriptorSet;
 use vulkano::device::{Device, Features};
 use vulkano::memory::allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator};
@@ -44,8 +42,7 @@ impl TryFrom<&VulkanSystem> for TrianglesPipeline {
             Arc::clone(vs.device()),
             Arc::clone(vs.render_pass()),
             vs.pipeline_cache().map(Arc::clone),
-            vs.descriptor_set_allocator(),
-            vs.get_write_descriptor_sets(),
+            vs.write_descriptor_set_manager(),
         )
     }
 }
@@ -60,16 +57,12 @@ impl TrianglesPipeline {
         device: Arc<Device>,
         render_pass: Arc<RenderPass>,
         cache: Option<Arc<PipelineCache>>,
-        desc_allocator: &impl DescriptorSetAllocator<Alloc = StandardDescriptorSetAlloc>,
-        write_descriptors: &WriteDescriptorSetCollection,
+        write_descriptors: &WriteDescriptorSetManager,
     ) -> Result<Self, PipelineCreateError> {
         let pipeline = Self::create_pipeline(Arc::clone(&device), render_pass, cache)?;
         Ok(Self {
-            descriptor_set: create_persistent_descriptor_set_from_collection(
-                &pipeline.layout().set_layouts()[0],
-                desc_allocator,
-                write_descriptors,
-            )?,
+            descriptor_set: write_descriptors
+                .create_persistent_descriptor_set(&pipeline.layout().set_layouts()[0])?,
             pipeline,
             memo_allocator: StandardMemoryAllocator::new_default(Arc::clone(&device)),
         })

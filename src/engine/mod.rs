@@ -139,7 +139,7 @@ impl Engine {
                     win_event: WindowEvent::Resized(..) | WindowEvent::SizeChanged(..),
                     ..
                 } => {
-                    self.vulkan_system.recreatee_swapchain();
+                    self.vulkan_system.recreate_swapchain();
                 }
                 Event::KeyUp {
                     keycode: Some(Keycode::F11),

@@ -1,8 +1,7 @@
-use crate::engine::system::vulkan::system::{VulkanSystem, WriteDescriptorSetCollection};
+use crate::engine::system::vulkan::system::VulkanSystem;
 use crate::engine::system::vulkan::textures::{ImageSamplerMode, TextureId, TextureManager};
-use crate::engine::system::vulkan::utils::pipeline::{
-    subpass_from_renderpass, write_descriptor_sets_from_collection,
-};
+use crate::engine::system::vulkan::utils::pipeline::subpass_from_renderpass;
+use crate::engine::system::vulkan::wds::WriteDescriptorSetManager;
 use crate::engine::system::vulkan::{DrawError, PipelineCreateError, ShaderLoadError};
 use crate::shader_from_path;
 use bytemuck::{Pod, Zeroable};
@@ -32,7 +31,7 @@ use vulkano::{Validated, VulkanError};
 pub struct TexturedPipeline {
     pipeline: Arc<GraphicsPipeline>,
     memo_allocator: StandardMemoryAllocator,
-    write_descriptors: WriteDescriptorSetCollection,
+    write_descriptors: Arc<WriteDescriptorSetManager>,
     texture_manager: TextureManager<Self, 0>,
 }
 
@@ -44,7 +43,7 @@ impl TryFrom<&VulkanSystem> for TexturedPipeline {
             Arc::clone(vs.device()),
             Arc::clone(vs.render_pass()),
             vs.pipeline_cache().map(Arc::clone),
-            vs.get_write_descriptor_sets().clone(),
+            vs.write_descriptor_set_manager().clone(),
         )
     }
 }
@@ -59,7 +58,7 @@ impl TexturedPipeline {
         device: Arc<Device>,
         render_pass: Arc<RenderPass>,
         cache: Option<Arc<PipelineCache>>,
-        write_descriptors: WriteDescriptorSetCollection,
+        write_descriptors: Arc<WriteDescriptorSetManager>,
     ) -> Result<Self, PipelineCreateError> {
         let pipeline = Self::create_pipeline(Arc::clone(&device), render_pass, cache)?;
         Ok(Self {
@@ -261,10 +260,8 @@ impl TexturedPipeline {
     ) -> Result<TextureId<Self>, Validated<VulkanError>> {
         self.texture_manager.prepare_texture(
             image,
-            write_descriptor_sets_from_collection(
-                &self.pipeline.layout().set_layouts()[0],
-                &self.write_descriptors,
-            ),
+            self.write_descriptors
+                .get_required_descriptors(&self.pipeline.layout().set_layouts()[0]),
         )
     }
 }
