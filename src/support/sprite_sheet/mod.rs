@@ -3,6 +3,7 @@ use egui::epaint::ahash::HashMap;
 use std::borrow::Cow;
 use std::ops::Index;
 
+pub mod generator;
 #[cfg(feature = "serde-xml-rs")]
 pub mod xml_texture_atlas;
 
