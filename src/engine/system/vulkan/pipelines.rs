@@ -1,4 +1,5 @@
 use crate::engine::system::vulkan::beautiful_lines::BeautifulLinePipeline;
+use crate::engine::system::vulkan::glowing_balls::GlowingBallsPipeline;
 use crate::engine::system::vulkan::lines::LinePipeline;
 use crate::engine::system::vulkan::system::VulkanSystem;
 use crate::engine::system::vulkan::textured::TexturedPipeline;
@@ -14,6 +15,7 @@ pub struct VulkanPipelines {
     pub beautiful_line: BeautifulLinePipeline,
     pub world2d_terrain: World2dTerrainPipeline,
     pub world2d_entities: World2dEntitiesPipeline,
+    pub glowing_balls: GlowingBallsPipeline,
     #[cfg(feature = "ui-egui")]
     pub egui: crate::engine::system::vulkan::egui::EguiPipeline,
 }
@@ -29,6 +31,7 @@ impl TryFrom<&VulkanSystem> for VulkanPipelines {
             beautiful_line: BeautifulLinePipeline::try_from(vs)?,
             world2d_terrain: World2dTerrainPipeline::try_from(vs)?,
             world2d_entities: World2dEntitiesPipeline::try_from(vs)?,
+            glowing_balls: GlowingBallsPipeline::try_from(vs)?,
             #[cfg(feature = "ui-egui")]
             egui: crate::engine::system::vulkan::egui::EguiPipeline::try_from(vs)?,
         })
