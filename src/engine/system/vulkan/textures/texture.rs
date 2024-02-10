@@ -2,7 +2,9 @@ use crate::engine::system::vulkan::textures::ImageSamplerMode;
 use crate::engine::system::vulkan::PipelineCreateError;
 use std::marker::PhantomData;
 use std::sync::Arc;
-use vulkano::descriptor_set::allocator::StandardDescriptorSetAllocator;
+use vulkano::descriptor_set::allocator::{
+    StandardDescriptorSetAllocator, StandardDescriptorSetAllocatorCreateInfo,
+};
 use vulkano::descriptor_set::layout::DescriptorSetLayout;
 use vulkano::descriptor_set::{PersistentDescriptorSet, WriteDescriptorSet};
 use vulkano::device::Device;
@@ -30,7 +32,10 @@ impl<T, const BINDING: u32> TextureManager<T, BINDING> {
         Ok(Self::new(
             mode.create_texture_sampler(Arc::clone(&device))?,
             Arc::clone(&pipeline.layout().set_layouts()[0]),
-            StandardDescriptorSetAllocator::new(device),
+            StandardDescriptorSetAllocator::new(
+                device,
+                StandardDescriptorSetAllocatorCreateInfo::default(),
+            ),
         ))
     }
 

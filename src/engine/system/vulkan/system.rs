@@ -9,14 +9,19 @@ use crate::engine::system::vulkan::{DrawError, Error};
 use std::borrow::Borrow;
 use std::sync::Arc;
 use std::time::Duration;
-use vulkano::command_buffer::allocator::{CommandBufferAllocator, StandardCommandBufferAllocator};
+use vulkano::command_buffer::allocator::{
+    CommandBufferAllocator, StandardCommandBufferAllocator,
+    StandardCommandBufferAllocatorCreateInfo,
+};
 use vulkano::command_buffer::{
     AutoCommandBufferBuilder, CommandBufferInheritanceInfo, CommandBufferInheritanceRenderPassInfo,
     CommandBufferInheritanceRenderPassType, CommandBufferUsage, RenderPassBeginInfo,
     SecondaryAutoCommandBuffer, SecondaryCommandBufferAbstract, SubpassBeginInfo, SubpassContents,
     SubpassEndInfo,
 };
-use vulkano::descriptor_set::allocator::StandardDescriptorSetAllocator;
+use vulkano::descriptor_set::allocator::{
+    StandardDescriptorSetAllocator, StandardDescriptorSetAllocatorCreateInfo,
+};
 use vulkano::descriptor_set::WriteDescriptorSet;
 use vulkano::device::physical::{PhysicalDevice, PhysicalDeviceType};
 use vulkano::device::{
@@ -91,15 +96,19 @@ impl VulkanSystem {
         .map_err(Error::FailedToCreateFramebuffers)?;
 
         Self {
-            image_system: Arc::new(ImageSystem::new(Arc::new(
-                StandardMemoryAllocator::new_default(Arc::clone(&device)),
+            image_system: Arc::new(ImageSystem::new(StandardMemoryAllocator::new_default(
+                Arc::clone(&device),
             ))?),
-            basic_buffers_manager: Arc::new(BasicBuffersManager::new(Arc::new(
+            basic_buffers_manager: Arc::new(BasicBuffersManager::new(
                 StandardMemoryAllocator::new_default(Arc::clone(&device)),
-            ))),
+            )),
             cmd_allocator: StandardCommandBufferAllocator::new(
                 Arc::clone(&device),
-                Default::default(),
+                StandardCommandBufferAllocatorCreateInfo {
+                    primary_buffer_count: 32,
+                    secondary_buffer_count: 32,
+                    ..StandardCommandBufferAllocatorCreateInfo::default()
+                },
             ),
             queue: queues.next().expect("Promised queue is not present"),
             recreate_swapchain: false,
@@ -111,7 +120,10 @@ impl VulkanSystem {
             swapchain_images,
             render_pass,
             write_descriptors: Arc::new(WriteDescriptorSetManager::new(
-                Arc::new(StandardDescriptorSetAllocator::new(Arc::clone(&device))),
+                Arc::new(StandardDescriptorSetAllocator::new(
+                    Arc::clone(&device),
+                    StandardDescriptorSetAllocatorCreateInfo::default(),
+                )),
                 Arc::new(StandardMemoryAllocator::new_default(Arc::clone(&device))),
             )),
             device,

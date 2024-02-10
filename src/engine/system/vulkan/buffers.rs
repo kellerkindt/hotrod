@@ -1,29 +1,32 @@
 use bytemuck::Pod;
 use std::sync::Arc;
-use vulkano::buffer::{Buffer, BufferAllocateError, BufferCreateInfo, BufferUsage, Subbuffer};
-use vulkano::memory::allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator};
+use vulkano::buffer::{AllocateBufferError, Buffer, BufferCreateInfo, BufferUsage, Subbuffer};
+use vulkano::memory::allocator::{AllocationCreateInfo, MemoryAllocator, MemoryTypeFilter};
 use vulkano::Validated;
 
 pub struct BasicBuffersManager {
-    memo_allocator: Arc<StandardMemoryAllocator>,
+    memo_allocator: Arc<dyn MemoryAllocator>,
 }
 
 impl BasicBuffersManager {
     #[inline]
-    pub fn new(memo_allocator: Arc<StandardMemoryAllocator>) -> Self {
-        Self { memo_allocator }
+    pub fn new(memo_allocator: impl MemoryAllocator) -> Self {
+        Self {
+            memo_allocator: Arc::new(memo_allocator),
+        }
     }
 
+    #[inline]
     pub fn create_index_buffer<I>(
         &self,
         indices: I,
-    ) -> Result<Subbuffer<[u32]>, Validated<BufferAllocateError>>
+    ) -> Result<Subbuffer<[u32]>, Validated<AllocateBufferError>>
     where
         I: IntoIterator<Item = u32>,
         I::IntoIter: ExactSizeIterator,
     {
         Buffer::from_iter(
-            &self.memo_allocator,
+            Arc::clone(&self.memo_allocator),
             BufferCreateInfo {
                 usage: BufferUsage::INDEX_BUFFER,
                 ..BufferCreateInfo::default()
@@ -37,16 +40,17 @@ impl BasicBuffersManager {
         )
     }
 
+    #[inline]
     pub fn create_vertex_buffer<I, T: Send + Sync + Pod>(
         &self,
         vertices: I,
-    ) -> Result<Subbuffer<[T]>, Validated<BufferAllocateError>>
+    ) -> Result<Subbuffer<[T]>, Validated<AllocateBufferError>>
     where
         I: IntoIterator<Item = T>,
         I::IntoIter: ExactSizeIterator,
     {
         Buffer::from_iter(
-            &self.memo_allocator,
+            Arc::clone(&self.memo_allocator),
             BufferCreateInfo {
                 usage: BufferUsage::VERTEX_BUFFER,
                 ..BufferCreateInfo::default()

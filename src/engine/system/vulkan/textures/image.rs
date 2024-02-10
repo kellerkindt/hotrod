@@ -1,19 +1,21 @@
 use crate::engine::system::vulkan::{PipelineCreateError, UploadError};
 use std::sync::Arc;
-use vulkano::buffer::{Buffer, BufferAllocateError, BufferCreateInfo, BufferUsage};
+use vulkano::buffer::{AllocateBufferError, Buffer, BufferCreateInfo, BufferUsage};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, CopyBufferToImageInfo};
 use vulkano::format::Format;
-use vulkano::image::{Image, ImageAllocateError, ImageCreateInfo, ImageType, ImageUsage};
-use vulkano::memory::allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator};
+use vulkano::image::{AllocateImageError, Image, ImageCreateInfo, ImageType, ImageUsage};
+use vulkano::memory::allocator::{AllocationCreateInfo, MemoryAllocator, MemoryTypeFilter};
 use vulkano::Validated;
 
 pub struct ImageSystem {
-    memo_allocator: Arc<StandardMemoryAllocator>,
+    memo_allocator: Arc<dyn MemoryAllocator>,
 }
 
 impl ImageSystem {
-    pub fn new(memo_allocator: Arc<StandardMemoryAllocator>) -> Result<Self, PipelineCreateError> {
-        Ok(Self { memo_allocator })
+    pub fn new(memo_allocator: impl MemoryAllocator) -> Result<Self, PipelineCreateError> {
+        Ok(Self {
+            memo_allocator: Arc::new(memo_allocator),
+        })
     }
 
     pub fn create_and_upload_image<P>(
@@ -28,13 +30,14 @@ impl ImageSystem {
         Ok(image)
     }
 
+    #[inline]
     pub fn create_image(
         &self,
         width: u32,
         height: u32,
-    ) -> Result<Arc<Image>, Validated<ImageAllocateError>> {
+    ) -> Result<Arc<Image>, Validated<AllocateImageError>> {
         Image::new(
-            &self.memo_allocator,
+            Arc::clone(&self.memo_allocator),
             ImageCreateInfo {
                 image_type: ImageType::Dim2d,
                 format: Format::R8G8B8A8_SRGB,
@@ -49,19 +52,20 @@ impl ImageSystem {
         )
     }
 
+    #[inline]
     pub fn upload_image<P, I>(
         &self,
         builder: &mut AutoCommandBufferBuilder<P>,
         image: Arc<Image>,
         rgba: I,
-    ) -> Result<(), Validated<BufferAllocateError>>
+    ) -> Result<(), Validated<AllocateBufferError>>
     where
         I: IntoIterator<Item = u8>,
         I::IntoIter: ExactSizeIterator,
     {
         builder.copy_buffer_to_image(CopyBufferToImageInfo::buffer_image(
             Buffer::from_iter(
-                &self.memo_allocator,
+                Arc::clone(&self.memo_allocator),
                 BufferCreateInfo {
                     usage: BufferUsage::TRANSFER_SRC,
                     ..BufferCreateInfo::default()
@@ -84,7 +88,7 @@ impl ImageSystem {
         image: Arc<Image>,
         region: Option<([u32; 2], [u32; 2])>,
         rgba: I,
-    ) -> Result<(), Validated<BufferAllocateError>>
+    ) -> Result<(), Validated<AllocateBufferError>>
     where
         I: IntoIterator<Item = u8>,
         I::IntoIter: ExactSizeIterator,
@@ -92,7 +96,7 @@ impl ImageSystem {
         builder.copy_buffer_to_image({
             let mut copy_info = CopyBufferToImageInfo::buffer_image(
                 Buffer::from_iter(
-                    &self.memo_allocator,
+                    Arc::clone(&self.memo_allocator),
                     BufferCreateInfo {
                         usage: BufferUsage::TRANSFER_SRC,
                         ..BufferCreateInfo::default()

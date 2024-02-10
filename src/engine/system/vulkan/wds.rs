@@ -47,7 +47,7 @@ impl WriteDescriptorSetManager {
         let origin = origin.borrow();
         self.write_descriptor_sets.insert(
             origin.binding(),
-            origin.create_descriptor_set(&self.memo_allocator)?,
+            origin.create_descriptor_set(Arc::clone(&self.memo_allocator))?,
         );
         Ok(())
     }

@@ -17,24 +17,25 @@ use std::collections::HashMap;
 use std::hash::BuildHasherDefault;
 use std::ops::DerefMut;
 use std::sync::{Arc, RwLock};
-use vulkano::buffer::BufferAllocateError;
+use vulkano::buffer::AllocateBufferError;
 use vulkano::command_buffer::AutoCommandBufferBuilder;
 use vulkano::device::{Device, Queue};
 use vulkano::image::sampler::{Filter, Sampler, SamplerCreateInfo, SamplerMipmapMode};
-use vulkano::image::{Image, ImageAllocateError};
+use vulkano::image::{AllocateImageError, Image};
 use vulkano::pipeline::cache::PipelineCache;
 use vulkano::pipeline::graphics::color_blend::{
-    AttachmentBlend, BlendFactor, BlendOp, ColorBlendState,
+    AttachmentBlend, ColorBlendAttachmentState, ColorBlendState,
 };
 use vulkano::pipeline::graphics::input_assembly::{InputAssemblyState, PrimitiveTopology};
 use vulkano::pipeline::graphics::multisample::MultisampleState;
-use vulkano::pipeline::graphics::rasterization::{CullMode, RasterizationState};
+use vulkano::pipeline::graphics::rasterization::RasterizationState;
 use vulkano::pipeline::graphics::vertex_input::{Vertex, VertexDefinition};
 use vulkano::pipeline::graphics::viewport::{Scissor, ViewportState};
 use vulkano::pipeline::graphics::GraphicsPipelineCreateInfo;
 use vulkano::pipeline::layout::PipelineDescriptorSetLayoutCreateInfo;
 use vulkano::pipeline::{
-    GraphicsPipeline, Pipeline, PipelineBindPoint, PipelineLayout, PipelineShaderStageCreateInfo,
+    DynamicState, GraphicsPipeline, Pipeline, PipelineBindPoint, PipelineLayout,
+    PipelineShaderStageCreateInfo,
 };
 use vulkano::render_pass::RenderPass;
 use vulkano::shader::EntryPoint;
@@ -143,23 +144,31 @@ impl EguiPipeline {
             GraphicsPipelineCreateInfo {
                 stages: stages.into_iter().collect(),
                 vertex_input_state: Some(vertex_input_state),
-                input_assembly_state: Some(
-                    InputAssemblyState::default().topology(PrimitiveTopology::TriangleList),
-                ),
-                viewport_state: Some(ViewportState::viewport_dynamic_scissor_dynamic(1)),
-                rasterization_state: Some(RasterizationState::new().cull_mode(CullMode::None)),
+                input_assembly_state: Some(InputAssemblyState {
+                    topology: PrimitiveTopology::TriangleList,
+                    ..InputAssemblyState::default()
+                }),
+                viewport_state: Some(ViewportState::default()), // Some(ViewportState::viewport_dynamic_scissor_dynamic(1)),
+                rasterization_state: Some(RasterizationState::default()),
                 multisample_state: Some(MultisampleState::default()),
-                color_blend_state: Some(ColorBlendState::new(1).blend({
-                    let mut blend = AttachmentBlend::alpha();
-                    blend.src_color_blend_factor = BlendFactor::One;
-                    blend.dst_color_blend_factor = BlendFactor::OneMinusSrcAlpha;
-                    blend.color_blend_op = BlendOp::Add;
-                    blend.src_alpha_blend_factor = BlendFactor::OneMinusDstAlpha;
-                    blend.dst_alpha_blend_factor = BlendFactor::One;
-                    blend.alpha_blend_op = BlendOp::Add;
-                    blend
-                })),
+                color_blend_state: Some(ColorBlendState::with_attachment_states(
+                    1,
+                    ColorBlendAttachmentState {
+                        // was before - erroneous?
+                        // .src_color_blend_factor = BlendFactor::One;
+                        // .dst_color_blend_factor = BlendFactor::OneMinusSrcAlpha;
+                        // .color_blend_op = BlendOp::Add;
+                        // .src_alpha_blend_factor = BlendFactor::OneMinusDstAlpha;
+                        // .dst_alpha_blend_factor = BlendFactor::One;
+                        // .alpha_blend_op = BlendOp::Add;
+                        blend: Some(AttachmentBlend::alpha()),
+                        ..ColorBlendAttachmentState::default()
+                    },
+                )),
                 subpass: Some(subpass_from_renderpass(render_pass)?),
+                dynamic_state: [DynamicState::Viewport, DynamicState::Scissor]
+                    .into_iter()
+                    .collect(),
                 ..GraphicsPipelineCreateInfo::layout(layout)
             },
         )?)
@@ -370,17 +379,18 @@ impl EguiPipeline {
     }
 
     #[inline]
-    fn create_image(&self, image: &ImageData) -> Result<Arc<Image>, Validated<ImageAllocateError>> {
+    fn create_image(&self, image: &ImageData) -> Result<Arc<Image>, Validated<AllocateImageError>> {
         self.image_system
             .create_image(image.width() as u32, image.height() as u32)
     }
 
+    #[inline]
     fn upload_image_or_delta<P>(
         &self,
         image: Arc<Image>,
         delta: &ImageDelta,
         builder: &mut AutoCommandBufferBuilder<P>,
-    ) -> Result<(), Validated<BufferAllocateError>> {
+    ) -> Result<(), Validated<AllocateBufferError>> {
         self.image_system.update_image(
             builder,
             image,

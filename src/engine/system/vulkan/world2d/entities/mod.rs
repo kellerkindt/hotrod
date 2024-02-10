@@ -12,16 +12,19 @@ use vulkano::command_buffer::AutoCommandBufferBuilder;
 use vulkano::device::Device;
 use vulkano::image::Image;
 use vulkano::pipeline::cache::PipelineCache;
-use vulkano::pipeline::graphics::color_blend::{AttachmentBlend, ColorBlendState};
+use vulkano::pipeline::graphics::color_blend::{
+    AttachmentBlend, ColorBlendAttachmentState, ColorBlendState,
+};
 use vulkano::pipeline::graphics::input_assembly::{InputAssemblyState, PrimitiveTopology};
 use vulkano::pipeline::graphics::multisample::MultisampleState;
-use vulkano::pipeline::graphics::rasterization::{CullMode, RasterizationState};
+use vulkano::pipeline::graphics::rasterization::RasterizationState;
 use vulkano::pipeline::graphics::vertex_input::{Vertex, VertexDefinition};
 use vulkano::pipeline::graphics::viewport::ViewportState;
 use vulkano::pipeline::graphics::GraphicsPipelineCreateInfo;
 use vulkano::pipeline::layout::PipelineDescriptorSetLayoutCreateInfo;
 use vulkano::pipeline::{
-    GraphicsPipeline, Pipeline, PipelineBindPoint, PipelineLayout, PipelineShaderStageCreateInfo,
+    DynamicState, GraphicsPipeline, Pipeline, PipelineBindPoint, PipelineLayout,
+    PipelineShaderStageCreateInfo,
 };
 use vulkano::render_pass::RenderPass;
 use vulkano::shader::EntryPoint;
@@ -114,13 +117,21 @@ impl World2dEntitiesPipeline {
             GraphicsPipelineCreateInfo {
                 stages: stages.into_iter().collect(),
                 vertex_input_state: Some(vertex_input_state),
-                input_assembly_state: Some(
-                    InputAssemblyState::default().topology(PrimitiveTopology::TriangleList),
-                ),
-                viewport_state: Some(ViewportState::viewport_dynamic_scissor_irrelevant()),
-                rasterization_state: Some(RasterizationState::new().cull_mode(CullMode::None)),
+                input_assembly_state: Some(InputAssemblyState {
+                    topology: PrimitiveTopology::TriangleList,
+                    ..InputAssemblyState::default()
+                }),
+                viewport_state: Some(ViewportState::default()),
+                rasterization_state: Some(RasterizationState::default()),
                 multisample_state: Some(MultisampleState::default()),
-                color_blend_state: Some(ColorBlendState::new(1).blend(AttachmentBlend::alpha())),
+                color_blend_state: Some(ColorBlendState::with_attachment_states(
+                    1,
+                    ColorBlendAttachmentState {
+                        blend: Some(AttachmentBlend::alpha()),
+                        ..ColorBlendAttachmentState::default()
+                    },
+                )),
+                dynamic_state: [DynamicState::Viewport].into_iter().collect(),
                 subpass: Some(subpass_from_renderpass(render_pass)?),
                 ..GraphicsPipelineCreateInfo::layout(layout)
             },

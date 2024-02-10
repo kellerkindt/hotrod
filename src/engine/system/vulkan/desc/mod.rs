@@ -1,4 +1,5 @@
 use crate::engine::system::vulkan::Error;
+use std::sync::Arc;
 use vulkano::buffer::{Buffer, BufferContents, BufferCreateInfo, BufferUsage};
 use vulkano::command_buffer::allocator::CommandBufferAllocator;
 use vulkano::command_buffer::AutoCommandBufferBuilder;
@@ -18,9 +19,9 @@ pub trait WriteDescriptorSetOrigin {
 
     fn data(&self) -> Self::Data;
 
-    fn create_descriptor_set<T: Suballocator>(
+    fn create_descriptor_set<T: Suballocator + Send + 'static>(
         &self,
-        memory_allocator: &GenericMemoryAllocator<T>,
+        memory_allocator: Arc<GenericMemoryAllocator<T>>,
     ) -> Result<WriteDescriptorSet, Error> {
         Ok(WriteDescriptorSet::buffer(
             self.binding(),
