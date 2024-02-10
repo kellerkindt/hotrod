@@ -12,8 +12,8 @@ use std::time::{Duration, Instant};
 use system::vulkan::system::VulkanSystem;
 use vulkano::command_buffer::SecondaryAutoCommandBuffer;
 use vulkano::instance::{Instance, InstanceExtensions};
-use vulkano::swapchain::{Surface, SurfaceApi};
-use vulkano::{Handle, LoadingError, Validated, VulkanError, VulkanLibrary, VulkanObject};
+use vulkano::swapchain::Surface;
+use vulkano::{LoadingError, Validated, VulkanError, VulkanLibrary};
 
 pub mod builder;
 pub mod parts;
@@ -33,6 +33,12 @@ pub struct Engine {
 
 impl Engine {
     pub fn new(builder: EngineBuilder) -> Result<Self, Error> {
+        eprintln!("SDL2 Version {}", sdl2::version::version());
+        eprintln!(
+            "SDL2 Video Drivers: {:?}",
+            sdl2::video::drivers().collect::<Vec<_>>()
+        );
+
         let context = sdl2::init().map_err(Error::SdlError)?;
         let video_subsystem = context.video().map_err(Error::SdlError)?;
         let event_pump = context.event_pump().map_err(Error::SdlError)?;
@@ -60,25 +66,11 @@ impl Engine {
             instance_info
         })?;
 
-        // ============================ WARNING ============================
-        //   Because of this unsafe linkage the `window` object *must not*
-        //   be dropped before the vulkan stuff / swapchain or the program
-        //   will experience a SIGSEGV!
-        // =================================================================
-        let surface_handle = window
-            .vulkan_create_surface(instance.handle().as_raw() as _)
-            .map_err(Error::SdlCreateVulkanSurfaceError)?;
-
-        // SAFETY: that's the way it is
         // SAFETY: Be sure not to drop the `window` before the `Surface` or vulkan `Swapchain`! (SIGSEGV otherwise)
-        let surface = Arc::new(unsafe {
-            Surface::from_handle(
-                Arc::clone(&instance),
-                <_ as Handle>::from_raw(surface_handle),
-                SurfaceApi::Xlib,
-                None,
-            )
-        });
+        let surface = unsafe { Surface::from_window_ref(Arc::clone(&instance), &window) }
+            .expect("Failed to create surface from window ref");
+
+        eprintln!("Window Surface API: {:?}", surface.api());
 
         let vulkan_system = VulkanSystem::new(
             surface,
