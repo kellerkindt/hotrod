@@ -62,6 +62,8 @@ impl EguiSystem {
         }
 
         self.texture_delta = output.textures_delta;
-        self.clipped_primitives = self.context.tessellate(output.shapes);
+        self.clipped_primitives = self
+            .context
+            .tessellate(output.shapes, output.pixels_per_point);
     }
 }

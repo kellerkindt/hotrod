@@ -1,4 +1,7 @@
-use egui::{CursorIcon, DroppedFile, HoveredFile, Key, PointerButton, Pos2, RawInput, Rect, Vec2};
+use egui::{
+    CursorIcon, DroppedFile, HoveredFile, Key, PointerButton, Pos2, RawInput, Rect, Vec2,
+    ViewportId, ViewportInfo,
+};
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use sdl2::mouse::Cursor;
@@ -6,16 +9,30 @@ use sdl2::mouse::SystemCursor;
 use std::path::PathBuf;
 use std::time::UNIX_EPOCH;
 
-#[derive(Default)]
 pub(crate) struct Sdl2EguiMapping {
     input: RawInput,
+}
+
+impl Default for Sdl2EguiMapping {
+    fn default() -> Self {
+        Self {
+            input: RawInput {
+                viewport_id: ViewportId::ROOT,
+                viewports: [(ViewportId::ROOT, ViewportInfo::default())]
+                    .into_iter()
+                    .collect(),
+                ..Default::default()
+            },
+        }
+    }
 }
 
 impl Sdl2EguiMapping {
     pub fn take_input(&mut self) -> RawInput {
         RawInput {
+            viewport_id: self.input.viewport_id,
+            viewports: self.input.viewports.clone(),
             screen_rect: self.input.screen_rect,
-            pixels_per_point: self.input.pixels_per_point,
             max_texture_side: self.input.max_texture_side,
             time: Some(UNIX_EPOCH.elapsed().unwrap_or_default().as_secs_f64()),
             predicted_dt: self.input.predicted_dt,
@@ -187,6 +204,7 @@ impl Sdl2EguiMapping {
                 };
                 self.input.events.push(egui::Event::Key {
                     key,
+                    physical_key: None,
                     pressed,
                     modifiers: self.input.modifiers,
                     repeat: false,
@@ -235,6 +253,7 @@ impl Sdl2EguiMapping {
                     .map(|h| DroppedFile {
                         path: h.path,
                         name: String::new(),
+                        mime: String::new(),
                         last_modified: None,
                         bytes: None,
                     })

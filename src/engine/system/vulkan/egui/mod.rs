@@ -41,7 +41,7 @@ use vulkano::shader::EntryPoint;
 use vulkano::{Validated, VulkanError};
 
 use crate::ui::egui::epaint::{ImageDelta, Primitive};
-use crate::ui::egui::TextureFilter;
+use crate::ui::egui::{TextureFilter, TextureWrapMode};
 
 type TextureSamplers = HashMap<TextureOptions, Arc<Sampler>>;
 
@@ -100,6 +100,7 @@ impl EguiPipeline {
                     TextureOptions {
                         magnification: TextureFilter::Linear,
                         minification: TextureFilter::Linear,
+                        wrap_mode: TextureWrapMode::ClampToEdge,
                     },
                     Arc::clone(&texture_manager.sampler()),
                 )]
