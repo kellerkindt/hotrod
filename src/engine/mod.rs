@@ -168,6 +168,8 @@ impl Engine {
     #[inline]
     pub fn set_fps(&mut self, fps: u32) {
         self.framerate_manager.set_target_frame_rate(fps);
+        #[cfg(feature = "egui")]
+        self.egui_system.set_target_frame_rate(fps);
     }
 
     #[inline]

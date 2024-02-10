@@ -30,6 +30,11 @@ impl EguiSystem {
     }
 
     #[inline]
+    pub fn set_target_frame_rate(&mut self, fps: u32) {
+        self.binding.set_target_frame_rate(fps);
+    }
+
+    #[inline]
     pub fn set_sdl2_view_area<I: Into<sdl2::rect::Rect>>(&mut self, area: I) {
         let area = area.into();
         self.width = area.width() as f32;

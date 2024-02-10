@@ -101,6 +101,10 @@ impl Sdl2EguiMapping {
         });
     }
 
+    pub fn set_target_frame_rate(&mut self, fps: u32) {
+        self.input.predicted_dt = 1.0_f32 / fps as f32
+    }
+
     pub fn on_sdl2_event(&mut self, event: &Event) {
         match event {
             Event::KeyDown { keycode, .. } | Event::KeyUp { keycode, .. } => {
