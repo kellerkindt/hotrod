@@ -43,6 +43,11 @@ impl Engine {
         let video_subsystem = context.video().map_err(Error::SdlError)?;
         let event_pump = context.event_pump().map_err(Error::SdlError)?;
 
+        eprintln!(
+            "SDL2 Chosen Video Driver: {}",
+            video_subsystem.current_video_driver()
+        );
+
         let window = video_subsystem
             .window(
                 builder.window_title.as_ref(),
