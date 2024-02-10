@@ -4,9 +4,10 @@ use crate::engine::system::vulkan::beautiful_lines::BeautifulLinePipeline;
 use crate::engine::system::vulkan::fps::FpsManager;
 use crate::engine::system::vulkan::pipelines::VulkanPipelines;
 use crate::engine::system::vulkan::DrawError;
+use log::error;
 use sdl2::event::{Event, WindowEvent};
 use sdl2::keyboard::Keycode;
-use sdl2::video::WindowBuildError;
+use sdl2::video::{FullscreenType, WindowBuildError};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use system::vulkan::system::VulkanSystem;
@@ -125,13 +126,14 @@ impl Engine {
     }
 
     fn poll_events(&mut self) -> Vec<Event> {
-        let mut events = Vec::new();
         let mut allow_maximize_change = true;
-        for event in self.sdl.event_pump.poll_iter() {
-            #[cfg(feature = "ui-egui")]
-            self.egui_system.on_sdl2_event(&event);
+        let events = self.sdl.event_pump.poll_iter().collect();
 
-            match &event {
+        for event in &events {
+            #[cfg(feature = "ui-egui")]
+            self.egui_system.on_sdl2_event(event);
+
+            match event {
                 Event::Window {
                     win_event: WindowEvent::Resized(..) | WindowEvent::SizeChanged(..),
                     ..
@@ -143,19 +145,13 @@ impl Engine {
                     repeat: false,
                     ..
                 } if allow_maximize_change => {
-                    self.sdl.window_maximized = !self.sdl.window_maximized;
-                    if self.sdl.window_maximized {
-                        self.sdl.window.restore();
-                    } else {
-                        self.sdl.window.maximize();
-                    }
-                    self.sdl.window.set_bordered(self.sdl.window_maximized);
+                    self.set_fullscreen(!self.sdl.window_maximized);
                     allow_maximize_change = false;
                 }
                 _ => {}
             }
-            events.push(event);
         }
+
         events
     }
 
@@ -170,6 +166,30 @@ impl Engine {
         self.framerate_manager.set_target_frame_rate(fps);
         #[cfg(feature = "egui")]
         self.egui_system.set_target_frame_rate(fps);
+    }
+
+    #[inline]
+    pub fn with_fullscreen(mut self, fullscreen: bool) -> Self {
+        self.set_fullscreen(fullscreen);
+        self
+    }
+
+    pub fn set_fullscreen(&mut self, fullscreen: bool) {
+        self.sdl.window_maximized = fullscreen;
+        if self.sdl.window_maximized {
+            self.sdl.window.maximize();
+            if let Err(e) = self.sdl.window.set_fullscreen(FullscreenType::True) {
+                error!("Enabling fullscreen failed: {e}");
+            }
+        } else {
+            if let Err(e) = self.sdl.window.set_fullscreen(FullscreenType::Off) {
+                error!("Disabling fullscreen failed: {e}");
+            }
+            self.sdl.window.restore();
+        }
+        self.sdl.window.set_bordered(!self.sdl.window_maximized);
+        #[cfg(feature = "egui")]
+        self.egui_system.set_fullscreen(fullscreen);
     }
 
     #[inline]

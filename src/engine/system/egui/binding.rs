@@ -1,8 +1,8 @@
 use egui::{
     CursorIcon, DroppedFile, HoveredFile, Key, PointerButton, Pos2, RawInput, Rect, Vec2,
-    ViewportId, ViewportInfo,
+    ViewportEvent, ViewportId, ViewportInfo,
 };
-use sdl2::event::Event;
+use sdl2::event::{Event, WindowEvent};
 use sdl2::keyboard::Keycode;
 use sdl2::mouse::Cursor;
 use sdl2::mouse::SystemCursor;
@@ -103,6 +103,10 @@ impl Sdl2EguiMapping {
 
     pub fn set_target_frame_rate(&mut self, fps: u32) {
         self.input.predicted_dt = 1.0_f32 / fps as f32
+    }
+
+    pub fn set_fullscreen(&mut self, fullscreen: bool) {
+        self.on_current_viewport_mut(|viewport| viewport.fullscreen = Some(fullscreen));
     }
 
     pub fn on_sdl2_event(&mut self, event: &Event) {
@@ -263,7 +267,43 @@ impl Sdl2EguiMapping {
                     })
                     .collect();
             }
+            Event::Quit { .. } => {
+                self.on_current_viewport_mut(|viewport| viewport.events.push(ViewportEvent::Close));
+            }
+            Event::Window { win_event, .. } => match win_event {
+                WindowEvent::Minimized => {
+                    self.on_current_viewport_mut(|v| {
+                        v.minimized = Some(true);
+                        v.maximized = Some(false);
+                    });
+                }
+                WindowEvent::Maximized => {
+                    self.on_current_viewport_mut(|v| {
+                        v.minimized = Some(false);
+                        v.maximized = Some(true);
+                    });
+                }
+                WindowEvent::FocusGained => {
+                    self.on_current_viewport_mut(|viewport| viewport.focused = Some(true));
+                }
+                WindowEvent::FocusLost => {
+                    self.on_current_viewport_mut(|viewport| viewport.focused = Some(false));
+                }
+                WindowEvent::Close => {
+                    self.on_current_viewport_mut(|viewport| {
+                        viewport.events.push(ViewportEvent::Close)
+                    });
+                }
+                _ => {}
+            },
             _ => {}
+        }
+    }
+
+    fn on_current_viewport_mut(&mut self, f: impl FnOnce(&mut ViewportInfo)) {
+        let viewport_id = self.input.viewport_id;
+        if let Some(viewport) = self.input.viewports.get_mut(&viewport_id) {
+            f(viewport);
         }
     }
 }

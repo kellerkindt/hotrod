@@ -31,7 +31,12 @@ impl EguiSystem {
 
     #[inline]
     pub fn set_target_frame_rate(&mut self, fps: u32) {
-        self.binding.set_target_frame_rate(fps);
+        self.binding.set_target_frame_rate(fps)
+    }
+
+    #[inline]
+    pub fn set_fullscreen(&mut self, fullscreen: bool) {
+        self.binding.set_fullscreen(fullscreen)
     }
 
     #[inline]
