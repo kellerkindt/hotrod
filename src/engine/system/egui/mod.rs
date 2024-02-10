@@ -62,7 +62,7 @@ impl EguiSystem {
         self.set_sdl2_view_area(sdl2::rect::Rect::new(0, 0, width, height));
 
         let input = RawInputShim(self.binding.take_input())
-            .with_injected_shortcuts(&sdl.video_subsystem.clipboard());
+            .with_injected_shortcuts(|| sdl.video_subsystem.clipboard());
 
         let output = self.context.run(input, |ctx| {
             ui(&ctx);
@@ -103,18 +103,18 @@ struct RawInputShim(RawInput);
 
 impl RawInputShim {
     #[inline]
-    pub fn with_injected_shortcuts(self, clipboard: &ClipboardUtil) -> RawInput {
+    pub fn with_injected_shortcuts(self, clipboard: impl FnOnce() -> ClipboardUtil) -> RawInput {
         self.inject_shortcuts(clipboard).0
     }
 
-    pub fn inject_shortcuts(mut self, clipboard: &ClipboardUtil) -> Self {
+    pub fn inject_shortcuts(mut self, clipboard: impl FnOnce() -> ClipboardUtil) -> Self {
         if self.0.modifiers.command {
             if self.is_key_pressed(Key::C) {
                 self.0.events.push(egui::Event::Copy)
             } else if self.is_key_pressed(Key::X) {
                 self.0.events.push(egui::Event::Cut)
             } else if self.is_key_pressed(Key::V) {
-                match clipboard.clipboard_text() {
+                match clipboard().clipboard_text() {
                     Ok(text) => self.0.events.push(egui::Event::Paste(text)),
                     Err(e) => error!("Failed to read clipboard: {e}"),
                 }
