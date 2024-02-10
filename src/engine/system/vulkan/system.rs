@@ -27,6 +27,7 @@ use vulkano::device::physical::{PhysicalDevice, PhysicalDeviceType};
 use vulkano::device::{
     Device, DeviceCreateInfo, DeviceExtensions, Features, Queue, QueueCreateInfo, QueueFlags,
 };
+use vulkano::format::Format;
 use vulkano::image::view::ImageView;
 use vulkano::image::{Image, ImageUsage};
 use vulkano::memory::allocator::StandardMemoryAllocator;
@@ -455,7 +456,18 @@ fn create_swapchain(
     let image_format = device
         .physical_device()
         .surface_formats(&surface, Default::default())
-        .map_err(Error::FailedToRetrieveSurfaceFormats)?[0]
+        .map_err(Error::FailedToRetrieveSurfaceFormats)?
+        .iter()
+        .find(|(format, _color_space)| {
+            [
+                Format::R8G8B8_SRGB,
+                Format::R8G8B8A8_SRGB,
+                Format::B8G8R8_SRGB,
+                Format::B8G8R8A8_SRGB,
+            ]
+            .contains(format)
+        })
+        .expect("Did not find a suitable color space")
         .0;
 
     Swapchain::new(
