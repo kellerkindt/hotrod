@@ -238,7 +238,9 @@ pub struct BeforeRenderContext<'a> {
 impl<'a> BeforeRenderContext<'a> {
     #[cfg(feature = "ui-egui")]
     pub fn update_egui(&mut self, f: impl FnOnce(&egui::Context)) {
-        self.engine.egui_system.update(self.width, self.height, f)
+        self.engine
+            .egui_system
+            .update(self.width, self.height, &mut self.engine.sdl, f)
     }
 
     pub fn render<F1>(self, f1: F1) -> Result<(), DrawError>

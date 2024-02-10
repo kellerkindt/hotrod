@@ -1,6 +1,9 @@
+use crate::engine::parts::sdl::SdlParts;
 use crate::ui::egui::ClippedPrimitive;
 use binding::Sdl2EguiMapping;
-use egui::{Context, CursorIcon, TexturesDelta};
+use egui::{Context, CursorIcon, Key, RawInput, TexturesDelta};
+use log::error;
+use sdl2::clipboard::ClipboardUtil;
 use sdl2::event::Event;
 
 mod binding;
@@ -49,10 +52,18 @@ impl EguiSystem {
 
     /// Updates the [`Context`]. This updates the state for calls to [`EguiPipeline::prepare`] and
     /// [`EguiPipeline::draw`].
-    pub fn update(&mut self, width: u32, height: u32, ui: impl FnOnce(&Context)) {
+    pub fn update(
+        &mut self,
+        width: u32,
+        height: u32,
+        sdl: &mut SdlParts,
+        ui: impl FnOnce(&Context),
+    ) {
         self.set_sdl2_view_area(sdl2::rect::Rect::new(0, 0, width, height));
 
-        let input = self.binding.take_input();
+        let input = RawInputShim(self.binding.take_input())
+            .with_injected_shortcuts(&sdl.video_subsystem.clipboard());
+
         let output = self.context.run(input, |ctx| {
             ui(&ctx);
         });
@@ -71,9 +82,54 @@ impl EguiSystem {
             }
         }
 
+        if !output.platform_output.copied_text.is_empty() {
+            if let Err(e) = sdl
+                .video_subsystem
+                .clipboard()
+                .set_clipboard_text(&output.platform_output.copied_text)
+            {
+                error!("Failed to update clipboard text: {e}");
+            }
+        }
+
         self.texture_delta = output.textures_delta;
         self.clipped_primitives = self
             .context
             .tessellate(output.shapes, output.pixels_per_point);
+    }
+}
+
+struct RawInputShim(RawInput);
+
+impl RawInputShim {
+    #[inline]
+    pub fn with_injected_shortcuts(self, clipboard: &ClipboardUtil) -> RawInput {
+        self.inject_shortcuts(clipboard).0
+    }
+
+    pub fn inject_shortcuts(mut self, clipboard: &ClipboardUtil) -> Self {
+        if self.0.modifiers.command {
+            if self.is_key_pressed(Key::C) {
+                self.0.events.push(egui::Event::Copy)
+            } else if self.is_key_pressed(Key::X) {
+                self.0.events.push(egui::Event::Cut)
+            } else if self.is_key_pressed(Key::V) {
+                match clipboard.clipboard_text() {
+                    Ok(text) => self.0.events.push(egui::Event::Paste(text)),
+                    Err(e) => error!("Failed to read clipboard: {e}"),
+                }
+            }
+        }
+        self
+    }
+
+    fn is_key_pressed(&self, cmd_and_key: Key) -> bool {
+        self.0.events.iter().any(|k| {
+            if let egui::Event::Key { key, pressed, .. } = k {
+                *pressed && *key == cmd_and_key
+            } else {
+                false
+            }
+        })
     }
 }

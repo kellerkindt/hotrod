@@ -21,6 +21,7 @@ impl Default for Sdl2EguiMapping {
                 viewports: [(ViewportId::ROOT, ViewportInfo::default())]
                     .into_iter()
                     .collect(),
+                focused: true,
                 ..Default::default()
             },
         }
@@ -36,7 +37,7 @@ impl Sdl2EguiMapping {
             max_texture_side: self.input.max_texture_side,
             time: Some(UNIX_EPOCH.elapsed().unwrap_or_default().as_secs_f64()),
             predicted_dt: self.input.predicted_dt,
-            modifiers: core::mem::take(&mut self.input.modifiers),
+            modifiers: self.input.modifiers,
             events: core::mem::take(&mut self.input.events),
             hovered_files: core::mem::take(&mut self.input.hovered_files),
             dropped_files: core::mem::take(&mut self.input.dropped_files),
@@ -284,9 +285,11 @@ impl Sdl2EguiMapping {
                     });
                 }
                 WindowEvent::FocusGained => {
+                    self.input.focused = true;
                     self.on_current_viewport_mut(|viewport| viewport.focused = Some(true));
                 }
                 WindowEvent::FocusLost => {
+                    self.input.focused = false;
                     self.on_current_viewport_mut(|viewport| viewport.focused = Some(false));
                 }
                 WindowEvent::Close => {
