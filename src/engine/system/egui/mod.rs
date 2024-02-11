@@ -7,6 +7,7 @@ use sdl2::clipboard::ClipboardUtil;
 use sdl2::event::Event;
 
 mod binding;
+pub mod styling;
 
 #[derive(Default)]
 pub struct EguiSystem {
