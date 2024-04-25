@@ -82,3 +82,16 @@ pub trait ZoomChangeSource {
 pub trait DragSource {
     fn update_view_position_by_drag_delta(&self, view: &mut Map2dView);
 }
+
+pub trait SelectionSource {
+    fn capture_screen_selection(&self) -> Option<(Pos<f32>, Dim<f32>)>;
+    fn update_screen_selection(&self, area: &mut Option<(Pos<f32>, Dim<f32>)>) {
+        *area = match self.capture_screen_selection() {
+            None => None,
+            Some((origin, size)) => match *area {
+                None => Some((origin, size)),
+                Some((origin, prev_size)) => Some((origin, prev_size + size)),
+            },
+        }
+    }
+}

@@ -1,5 +1,5 @@
-use crate::engine::types::world2d::Pos;
-use crate::support::world2d::view::{DragSource, Map2dView, ZoomChangeSource};
+use crate::engine::types::world2d::{Dim, Pos};
+use crate::support::world2d::view::{DragSource, Map2dView, SelectionSource, ZoomChangeSource};
 use egui::{InputState, PointerButton};
 
 impl ZoomChangeSource for &InputState {
@@ -26,5 +26,19 @@ impl DragSource for &InputState {
             let velocity = self.pointer.delta();
             view.move_by_screen_delta(velocity.x, velocity.y);
         }
+    }
+}
+
+impl SelectionSource for &InputState {
+    fn capture_screen_selection(&self) -> Option<(Pos<f32>, Dim<f32>)> {
+        if self.pointer.is_decidedly_dragging() && self.pointer.button_down(PointerButton::Primary)
+        {
+            if let Some(origin) = self.pointer.interact_pos() {
+                let origin = Pos::new(origin.x, origin.y);
+                let distance = Dim::new(self.pointer.delta().x, self.pointer.delta().y);
+                return Some((origin, distance));
+            }
+        }
+        None
     }
 }
