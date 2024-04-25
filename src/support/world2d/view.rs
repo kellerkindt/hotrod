@@ -78,3 +78,7 @@ impl Map2dView {
 pub trait ZoomChangeSource {
     fn update_zoom_at_screen_position(&self, view: &mut Map2dView);
 }
+
+pub trait DragSource {
+    fn update_view_position_by_drag_delta(&self, view: &mut Map2dView);
+}
