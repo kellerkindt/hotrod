@@ -74,3 +74,7 @@ impl Map2dView {
         World2dView::from([self.view_x, self.view_y, self.zoom])
     }
 }
+
+pub trait ZoomChangeSource {
+    fn update_zoom_at_screen_position(&self, view: &mut Map2dView);
+}
