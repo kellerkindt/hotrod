@@ -1,6 +1,6 @@
 use crate::engine::types::world2d::Pos;
 use crate::support::world2d::view::{DragSource, Map2dView, ZoomChangeSource};
-use egui::InputState;
+use egui::{InputState, PointerButton};
 
 impl ZoomChangeSource for &InputState {
     fn update_zoom_at_screen_position(&self, view: &mut Map2dView) {
@@ -20,7 +20,9 @@ impl ZoomChangeSource for &InputState {
 
 impl DragSource for &InputState {
     fn update_view_position_by_drag_delta(&self, view: &mut Map2dView) {
-        if self.pointer.is_decidedly_dragging() {
+        if self.pointer.is_decidedly_dragging()
+            && self.pointer.button_down(PointerButton::Secondary)
+        {
             let velocity = self.pointer.delta();
             view.move_by_screen_delta(velocity.x, velocity.y);
         }
