@@ -365,17 +365,17 @@ impl VulkanSystem {
             )
             .then_signal_fence_and_flush();
 
-        match future.map_err(Validated::unwrap) {
+        match future {
             Ok(future) => {
                 self.previous_frame_end = Some(future.boxed());
             }
-            Err(VulkanError::OutOfDate) => {
-                self.recreate_swapchain = true;
-                self.previous_frame_end =
-                    Some(vulkano::sync::now(Arc::clone(&self.device)).boxed());
-            }
             Err(e) => {
-                eprintln!("Failed to flush future: {e:?}");
+                match e {
+                    Validated::Error(VulkanError::OutOfDate) => {}
+                    Validated::Error(e) => eprintln!("Error: {e}"),
+                    Validated::ValidationError(e) => eprintln!("Validation Error: {e}"),
+                }
+                self.recreate_swapchain = true;
                 self.previous_frame_end =
                     Some(vulkano::sync::now(Arc::clone(&self.device)).boxed());
             }
