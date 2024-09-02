@@ -196,6 +196,11 @@ impl Engine {
     pub fn delay(&mut self) -> Duration {
         self.framerate_manager.delay()
     }
+
+    #[inline]
+    pub fn vulkan_system_mut(&mut self) -> &mut VulkanSystem {
+        &mut self.vulkan_system
+    }
 }
 
 impl Default for Engine {

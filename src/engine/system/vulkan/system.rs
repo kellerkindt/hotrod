@@ -54,6 +54,7 @@ pub struct VulkanSystem {
     cmd_allocator: StandardCommandBufferAllocator,
     image_system: Arc<ImageSystem>,
     basic_buffers_manager: Arc<BasicBuffersManager>,
+    clear_value_rgba: [f32; 4],
 }
 
 impl VulkanSystem {
@@ -128,6 +129,7 @@ impl VulkanSystem {
                 Arc::new(StandardMemoryAllocator::new_default(Arc::clone(&device))),
             )),
             device,
+            clear_value_rgba: [0.0, 0.5, 1.0, 1.0], // blue-ish value
         }
         .with_write_descriptors_initialized()
     }
@@ -206,6 +208,16 @@ impl VulkanSystem {
     #[inline]
     pub fn recreate_swapchain(&mut self) {
         self.recreate_swapchain = true;
+    }
+
+    #[inline]
+    pub fn clear_value(&self) -> [f32; 4] {
+        self.clear_value_rgba
+    }
+
+    #[inline]
+    pub fn set_clear_value(&mut self, rgba: [f32; 4]) {
+        self.clear_value_rgba = rgba;
     }
 
     // TODO just for demo
@@ -303,7 +315,7 @@ impl VulkanSystem {
         primary
             .begin_render_pass(
                 RenderPassBeginInfo {
-                    clear_values: vec![Some([0.0, 0.5, 1.0, 1.0].into())],
+                    clear_values: vec![Some(self.clear_value_rgba.into())],
                     // clear_values: vec![Some([0.0, 0.0, 0.0, 1.0].into())],
                     ..RenderPassBeginInfo::framebuffer(Arc::clone(
                         &self.swapchain_framebuffers[swapchain_image_index as usize],
