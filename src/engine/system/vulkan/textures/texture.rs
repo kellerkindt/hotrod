@@ -107,8 +107,14 @@ impl<T, const BINDING: u32> TextureManager<T, BINDING> {
     }
 }
 
-#[derive(Clone)]
 pub struct TextureId<T>(pub Arc<TextureInner<T>>);
+
+impl<T> Clone for TextureId<T> {
+    #[inline]
+    fn clone(&self) -> Self {
+        Self(Arc::clone(&self.0))
+    }
+}
 
 impl<T> TextureId<T> {
     #[inline]
