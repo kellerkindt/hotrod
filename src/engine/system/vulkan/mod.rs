@@ -66,6 +66,10 @@ pub enum DrawError {
     FailedToBuildCommandBuffer(Validated<VulkanError>),
     #[error("Failed to acquire the next swapchain image: {0}")]
     FailedToAcquireSwapchainImage(VulkanError),
+    /// This might happen if the window is minimized, the screen locked or in standby or the window
+    /// is for another reason not presented to the user.
+    #[error("Acquiring the next swapchain image ran into the presentation timeout")]
+    AcquiringSwapchainImageReachedTimeout,
 }
 
 #[derive(thiserror::Error, Debug)]

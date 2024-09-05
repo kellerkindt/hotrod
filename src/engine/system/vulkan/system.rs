@@ -255,7 +255,14 @@ impl VulkanSystem {
         }
 
         let (swapchain_image_index, suboptimal, acquire_future) =
-            acquire_next_image(Arc::clone(&self.swapchain), Some(Duration::from_secs(1))).unwrap();
+            match acquire_next_image(Arc::clone(&self.swapchain), Some(Duration::from_secs(1))) {
+                Ok(ok) => Ok(ok),
+                Err(Validated::Error(VulkanError::Timeout)) => {
+                    return Err(DrawError::AcquiringSwapchainImageReachedTimeout)
+                }
+                e => e,
+            }
+            .unwrap();
 
         if suboptimal {
             self.recreate_swapchain = true;
