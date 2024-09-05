@@ -73,6 +73,12 @@ impl Map2dView {
     pub fn to_world_2d_view(&self) -> World2dView {
         World2dView::from([self.view_x, self.view_y, self.zoom])
     }
+
+    #[inline]
+    pub fn set_viewed_world_position(&mut self, x: f32, y: f32) {
+        self.view_x = x;
+        self.view_y = y;
+    }
 }
 
 pub trait ZoomChangeSource {
