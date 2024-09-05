@@ -201,6 +201,11 @@ impl Engine {
     pub fn vulkan_system_mut(&mut self) -> &mut VulkanSystem {
         &mut self.vulkan_system
     }
+
+    #[inline]
+    pub fn sdl_parts_mut(&mut self) -> &mut SdlParts {
+        &mut self.sdl
+    }
 }
 
 impl Default for Engine {
