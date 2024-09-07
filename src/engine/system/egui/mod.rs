@@ -35,7 +35,7 @@ impl EguiSystem {
     }
 
     #[inline]
-    pub fn set_target_frame_rate(&mut self, fps: u32) {
+    pub fn set_target_frame_rate(&mut self, fps: u16) {
         self.binding.set_target_frame_rate(fps)
     }
 

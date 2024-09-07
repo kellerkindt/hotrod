@@ -6,14 +6,14 @@ pub struct FpsManager {
 }
 
 impl FpsManager {
-    pub fn new(target_frame_rate: u32) -> Self {
+    pub fn new(target_frame_rate: u16) -> Self {
         Self {
             target_duration: Self::target_duration(target_frame_rate),
             last_instant: None,
         }
     }
 
-    pub fn set_target_frame_rate(&mut self, target_frame_rate: u32) {
+    pub fn set_target_frame_rate(&mut self, target_frame_rate: u16) {
         self.target_duration = Self::target_duration(target_frame_rate);
     }
 
@@ -32,7 +32,7 @@ impl FpsManager {
     }
 
     #[inline]
-    fn target_duration(target_frame_rate: u32) -> Duration {
+    fn target_duration(target_frame_rate: u16) -> Duration {
         Duration::from_secs_f32(1.0_f32 / (target_frame_rate as f32))
     }
 }

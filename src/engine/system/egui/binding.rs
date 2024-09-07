@@ -102,7 +102,7 @@ impl Sdl2EguiMapping {
         });
     }
 
-    pub fn set_target_frame_rate(&mut self, fps: u32) {
+    pub fn set_target_frame_rate(&mut self, fps: u16) {
         self.input.predicted_dt = 1.0_f32 / fps as f32
     }
 

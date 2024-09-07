@@ -9,6 +9,7 @@ pub struct EngineBuilder<'a> {
     pub(crate) window_width: u32,
     pub(crate) window_height: u32,
     pub(crate) instance_info: InstanceCreateInfo,
+    pub(crate) target_frame_rate: u16,
     #[cfg(feature = "ttf-sdl2")]
     pub(crate) font_renderer_ttf: Option<Cow<'static, [u8]>>,
 }
@@ -50,6 +51,12 @@ impl EngineBuilder<'_> {
     }
 
     #[inline]
+    pub fn with_target_frame_rate(mut self, target_frame_rate: u16) -> Self {
+        self.target_frame_rate = target_frame_rate;
+        self
+    }
+
+    #[inline]
     pub fn with_ttf_font_renderer(
         mut self,
         font_renderer_ttf: impl Into<Cow<'static, [u8]>>,
@@ -73,6 +80,7 @@ impl Default for EngineBuilder<'static> {
             window_width: 1024,
             window_height: 768,
             instance_info: InstanceCreateInfo::application_from_cargo_toml(),
+            target_frame_rate: 60,
             #[cfg(feature = "ttf-sdl2")]
             font_renderer_ttf: None,
         }

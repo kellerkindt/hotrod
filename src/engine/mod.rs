@@ -106,7 +106,7 @@ impl Engine {
                 window_icon: None,
             }
             .maybe_with_window_icon(builder.window_icon),
-            framerate_manager: FpsManager::new(60),
+            framerate_manager: FpsManager::new(builder.target_frame_rate),
             #[cfg(feature = "ttf-font-renderer")]
             font_renderer: FontRenderer::new(
                 builder.font_renderer_ttf.expect("Missing TrueType Font"),
@@ -168,22 +168,10 @@ impl Engine {
     }
 
     #[inline]
-    pub fn with_fps(mut self, fps: u32) -> Self {
-        self.set_fps(fps);
-        self
-    }
-
-    #[inline]
-    pub fn set_fps(&mut self, fps: u32) {
+    pub fn set_fps(&mut self, fps: u16) {
         self.framerate_manager.set_target_frame_rate(fps);
         #[cfg(feature = "egui")]
         self.egui_system.set_target_frame_rate(fps);
-    }
-
-    #[inline]
-    pub fn with_fullscreen(mut self, fullscreen: bool) -> Self {
-        self.set_fullscreen(fullscreen);
-        self
     }
 
     pub fn set_fullscreen(&mut self, fullscreen: bool) {
