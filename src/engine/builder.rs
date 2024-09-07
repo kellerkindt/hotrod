@@ -32,6 +32,12 @@ impl EngineBuilder<'_> {
     }
 
     #[inline]
+    pub fn with_window_title(mut self, title: impl Into<Cow<'static, str>>) -> Self {
+        self.window_title = title.into();
+        self
+    }
+
+    #[inline]
     pub fn with_ttf_font_renderer(
         mut self,
         font_renderer_ttf: impl Into<Cow<'static, [u8]>>,
