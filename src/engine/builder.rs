@@ -38,6 +38,18 @@ impl EngineBuilder<'_> {
     }
 
     #[inline]
+    pub fn with_window_width(mut self, width: u32) -> Self {
+        self.window_width = width;
+        self
+    }
+
+    #[inline]
+    pub fn with_window_height(mut self, height: u32) -> Self {
+        self.window_height = height;
+        self
+    }
+
+    #[inline]
     pub fn with_ttf_font_renderer(
         mut self,
         font_renderer_ttf: impl Into<Cow<'static, [u8]>>,
