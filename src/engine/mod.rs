@@ -103,7 +103,9 @@ impl Engine {
                 ttf: sdl2::ttf::init()
                     .map_err(|e| Error::SdlError(format!("Failed to init TTF module: {e}")))?,
                 context,
-            },
+                window_icon: None,
+            }
+            .maybe_with_window_icon(builder.window_icon),
             framerate_manager: FpsManager::new(60),
             #[cfg(feature = "ttf-font-renderer")]
             font_renderer: FontRenderer::new(
