@@ -2,7 +2,6 @@ use crate::engine::parts::sdl::SdlParts;
 use crate::ui::egui::ClippedPrimitive;
 use binding::Sdl2EguiMapping;
 use egui::{Context, CursorIcon, Key, RawInput, TexturesDelta};
-use log::error;
 use sdl2::clipboard::ClipboardUtil;
 use sdl2::event::Event;
 

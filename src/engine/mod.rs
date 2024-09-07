@@ -5,7 +5,6 @@ use crate::engine::system::ttf::FontRenderer;
 use crate::engine::system::vulkan::beautiful_lines::BeautifulLinePipeline;
 use crate::engine::system::vulkan::pipelines::VulkanPipelines;
 use crate::engine::system::vulkan::DrawError;
-use log::error;
 use sdl2::event::{Event, WindowEvent};
 use sdl2::keyboard::Keycode;
 use sdl2::video::{FullscreenType, WindowBuildError};
