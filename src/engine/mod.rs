@@ -1,7 +1,7 @@
 use crate::engine::builder::EngineBuilder;
 use crate::engine::parts::sdl::SdlParts;
+use crate::engine::system::fps::FpsManager;
 use crate::engine::system::vulkan::beautiful_lines::BeautifulLinePipeline;
-use crate::engine::system::vulkan::fps::FpsManager;
 use crate::engine::system::vulkan::pipelines::VulkanPipelines;
 use crate::engine::system::vulkan::DrawError;
 use log::error;

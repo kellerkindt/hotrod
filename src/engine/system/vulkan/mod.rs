@@ -10,7 +10,6 @@ pub mod beautiful_lines;
 pub mod buffers;
 #[cfg(feature = "ui-egui")]
 pub mod egui;
-pub mod fps;
 pub mod glowing_balls;
 pub mod lines;
 pub mod pipelines;
