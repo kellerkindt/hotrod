@@ -3,3 +3,6 @@ pub mod canvas;
 pub mod egui;
 pub mod fps;
 pub mod vulkan;
+
+#[cfg(feature = "ttf-sdl2")]
+pub mod ttf;

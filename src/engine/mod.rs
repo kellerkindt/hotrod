@@ -1,6 +1,7 @@
 use crate::engine::builder::EngineBuilder;
 use crate::engine::parts::sdl::SdlParts;
 use crate::engine::system::fps::FpsManager;
+use crate::engine::system::ttf::FontRenderer;
 use crate::engine::system::vulkan::beautiful_lines::BeautifulLinePipeline;
 use crate::engine::system::vulkan::pipelines::VulkanPipelines;
 use crate::engine::system::vulkan::DrawError;
@@ -26,6 +27,8 @@ pub struct Engine {
     vulkan_pipelines: Arc<VulkanPipelines>,
     #[cfg(feature = "ui-egui")]
     egui_system: system::egui::EguiSystem,
+    #[cfg(feature = "ttf-font-renderer")]
+    font_renderer: FontRenderer,
     #[cfg(feature = "ui-egui")]
     // drop after the vulkan system! (last is fine, too)
     sdl: SdlParts,
@@ -102,6 +105,10 @@ impl Engine {
                 context,
             },
             framerate_manager: FpsManager::new(60),
+            #[cfg(feature = "ttf-font-renderer")]
+            font_renderer: FontRenderer::new(
+                builder.font_renderer_ttf.expect("Missing TrueType Font"),
+            ),
         })
     }
 
@@ -117,6 +124,9 @@ impl Engine {
             height,
             start,
         });
+
+        #[cfg(feature = "ttf-font-renderer")]
+        self.font_renderer.on_frame_completed();
 
         RenderResponse {
             data,
@@ -277,6 +287,8 @@ impl<'a> BeforeRenderContext<'a> {
                     pipelines: &self.engine.vulkan_pipelines,
                     width: self.width,
                     height: self.height,
+                    #[cfg(feature = "ttf-font-renderer")]
+                    font_renderer: &mut self.engine.font_renderer,
                 }));
 
                 #[cfg(feature = "ui-egui")]
@@ -299,12 +311,13 @@ impl<'a> BeforeRenderContext<'a> {
     }
 }
 
-#[derive(Copy, Clone)]
 pub struct RenderContext<'a, 'b> {
     pub inner: &'a system::vulkan::system::RenderContext<'b>,
     pub pipelines: &'a Arc<VulkanPipelines>,
     pub width: u32,
     pub height: u32,
+    #[cfg(feature = "ttf-font-renderer")]
+    pub font_renderer: &'a mut FontRenderer,
 }
 
 pub struct RenderResponse<T> {
