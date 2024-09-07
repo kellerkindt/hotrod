@@ -1,7 +1,8 @@
 use crate::engine::system::vulkan::{PipelineCreateError, UploadError};
+use crossbeam::queue::SegQueue;
 use std::sync::Arc;
 use vulkano::buffer::{AllocateBufferError, Buffer, BufferCreateInfo, BufferUsage};
-use vulkano::command_buffer::{AutoCommandBufferBuilder, CopyBufferToImageInfo};
+use vulkano::command_buffer::CopyBufferToImageInfo;
 use vulkano::format::Format;
 use vulkano::image::{AllocateImageError, Image, ImageCreateInfo, ImageType, ImageUsage};
 use vulkano::memory::allocator::{AllocationCreateInfo, MemoryAllocator, MemoryTypeFilter};
@@ -9,24 +10,36 @@ use vulkano::Validated;
 
 pub struct ImageSystem {
     memo_allocator: Arc<dyn MemoryAllocator>,
+    upload_queue: SegQueue<CopyBufferToImageInfo>,
 }
 
 impl ImageSystem {
     pub fn new(memo_allocator: impl MemoryAllocator) -> Result<Self, PipelineCreateError> {
         Ok(Self {
             memo_allocator: Arc::new(memo_allocator),
+            upload_queue: Default::default(),
         })
     }
 
-    pub fn create_and_upload_image<P>(
+    /// Whether there are [`CopyBufferToImageInfo`]-requests enqueued.
+    pub(crate) fn has_upload_info_enqueued(&self) -> bool {
+        !self.upload_queue.is_empty()
+    }
+
+    /// Retrieves enqueued [`CopyBufferToImageInfo`]-requests.
+    pub(crate) fn next_upload_info(&self) -> Option<CopyBufferToImageInfo> {
+        self.upload_queue.pop()
+    }
+
+    /// Creates a new [`Image`] and enqueues an upload-request the given `rgba`-data as content.
+    pub fn create_and_upload_image(
         &self,
-        builder: &mut AutoCommandBufferBuilder<P>,
         rgba: Vec<u8>,
         width: u32,
         height: u32,
     ) -> Result<Arc<Image>, UploadError> {
         let image = self.create_image(width, height)?;
-        self.upload_image(builder, Arc::clone(&image), rgba)?;
+        self.enqueue_image_upload(Arc::clone(&image), rgba)?;
         Ok(image)
     }
 
@@ -53,9 +66,8 @@ impl ImageSystem {
     }
 
     #[inline]
-    pub fn upload_image<P, I>(
+    pub fn enqueue_image_upload<I>(
         &self,
-        builder: &mut AutoCommandBufferBuilder<P>,
         image: Arc<Image>,
         rgba: I,
     ) -> Result<(), Validated<AllocateBufferError>>
@@ -63,7 +75,21 @@ impl ImageSystem {
         I: IntoIterator<Item = u8>,
         I::IntoIter: ExactSizeIterator,
     {
-        builder.copy_buffer_to_image(CopyBufferToImageInfo::buffer_image(
+        self.upload_queue
+            .push(self.create_copy_buffer_to_image_image(image, rgba)?);
+        Ok(())
+    }
+
+    fn create_copy_buffer_to_image_image<I>(
+        &self,
+        image: Arc<Image>,
+        rgba: I,
+    ) -> Result<CopyBufferToImageInfo, Validated<AllocateBufferError>>
+    where
+        I: IntoIterator<Item = u8>,
+        I::IntoIter: ExactSizeIterator,
+    {
+        Ok(CopyBufferToImageInfo::buffer_image(
             Buffer::from_iter(
                 Arc::clone(&self.memo_allocator),
                 BufferCreateInfo {
@@ -78,13 +104,11 @@ impl ImageSystem {
                 rgba,
             )?,
             image,
-        ))?;
-        Ok(())
+        ))
     }
 
-    pub fn update_image<P, I>(
+    pub fn enqueue_image_update<I>(
         &self,
-        builder: &mut AutoCommandBufferBuilder<P>,
         image: Arc<Image>,
         region: Option<([u32; 2], [u32; 2])>,
         rgba: I,
@@ -93,23 +117,8 @@ impl ImageSystem {
         I: IntoIterator<Item = u8>,
         I::IntoIter: ExactSizeIterator,
     {
-        builder.copy_buffer_to_image({
-            let mut copy_info = CopyBufferToImageInfo::buffer_image(
-                Buffer::from_iter(
-                    Arc::clone(&self.memo_allocator),
-                    BufferCreateInfo {
-                        usage: BufferUsage::TRANSFER_SRC,
-                        ..BufferCreateInfo::default()
-                    },
-                    AllocationCreateInfo {
-                        memory_type_filter: MemoryTypeFilter::PREFER_HOST
-                            | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
-                        ..AllocationCreateInfo::default()
-                    },
-                    rgba,
-                )?,
-                image,
-            );
+        self.upload_queue.push({
+            let mut copy_info = self.create_copy_buffer_to_image_image(image, rgba)?;
 
             if let Some(([x, y], [width, height])) = region {
                 copy_info.regions[0].image_offset[0] = x;
@@ -119,7 +128,7 @@ impl ImageSystem {
             }
 
             copy_info
-        })?;
+        });
 
         Ok(())
     }

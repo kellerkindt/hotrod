@@ -185,7 +185,7 @@ impl ActionSink {
             } => {
                 if let Some(prev) = current.replace(action) {
                     if let Err(e) = prev.flush(builder, pipelines) {
-                        eprintln!("{e:?}");
+                        error!("{e:?}");
                     }
                 }
             }
@@ -202,7 +202,7 @@ impl ActionSink {
                 let mut builder = ctx.create_render_buffer_builder().unwrap();
                 for action in buffer {
                     if let Err(e) = action.flush(&mut builder, pipelines) {
-                        eprintln!("{e:?}");
+                        error!("{e:?}");
                     }
                 }
                 builder.build().unwrap()
@@ -214,7 +214,7 @@ impl ActionSink {
             } => {
                 if let Some(action) = current {
                     if let Err(e) = action.flush(&mut builder, &pipelines) {
-                        eprintln!("{e:?}");
+                        error!("{e:?}");
                     }
                 }
                 builder.build().unwrap()

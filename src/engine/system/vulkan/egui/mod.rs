@@ -212,12 +212,8 @@ impl EguiPipeline {
     }
 
     #[inline]
-    pub fn prepare<P>(
-        &self,
-        builder: &mut AutoCommandBufferBuilder<P>,
-        egui: &EguiSystem,
-    ) -> Result<(), UploadError> {
-        self.update_textures(&egui.texture_delta, builder)
+    pub fn prepare(&self, egui: &EguiSystem) -> Result<(), UploadError> {
+        self.update_textures(&egui.texture_delta)
     }
 
     #[inline]
@@ -326,11 +322,7 @@ impl EguiPipeline {
         }
     }
 
-    fn update_textures<P>(
-        &self,
-        textures_delta: &TexturesDelta,
-        builder: &mut AutoCommandBufferBuilder<P>,
-    ) -> Result<(), UploadError> {
+    fn update_textures(&self, textures_delta: &TexturesDelta) -> Result<(), UploadError> {
         let mut inner = self.inner.write().unwrap();
         inner
             .textures_to_free
@@ -349,7 +341,7 @@ impl EguiPipeline {
                 Arc::clone(&inner.images[&texture_id])
             };
 
-            self.upload_image_or_delta(image, delta, builder)?;
+            self.enqueue_image_upload_or_delta_update(image, delta)?;
         }
 
         Ok(())
@@ -385,14 +377,12 @@ impl EguiPipeline {
     }
 
     #[inline]
-    fn upload_image_or_delta<P>(
+    fn enqueue_image_upload_or_delta_update(
         &self,
         image: Arc<Image>,
         delta: &ImageDelta,
-        builder: &mut AutoCommandBufferBuilder<P>,
     ) -> Result<(), Validated<AllocateBufferError>> {
-        self.image_system.update_image(
-            builder,
+        self.image_system.enqueue_image_update(
             image,
             delta.pos.map(|[x, y]| {
                 (

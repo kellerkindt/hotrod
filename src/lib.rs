@@ -1,3 +1,6 @@
+#[macro_use]
+extern crate tracing;
+
 pub use cgmath;
 pub use sdl2;
 pub use vulkano;

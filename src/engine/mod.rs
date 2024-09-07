@@ -34,8 +34,8 @@ pub struct Engine {
 
 impl Engine {
     pub fn new(builder: EngineBuilder) -> Result<Self, Error> {
-        eprintln!("SDL2 Version {}", sdl2::version::version());
-        eprintln!(
+        info!("SDL2 Version {}", sdl2::version::version());
+        info!(
             "SDL2 Video Drivers: {:?}",
             sdl2::video::drivers().collect::<Vec<_>>()
         );
@@ -44,7 +44,7 @@ impl Engine {
         let video_subsystem = context.video().map_err(Error::SdlError)?;
         let event_pump = context.event_pump().map_err(Error::SdlError)?;
 
-        eprintln!(
+        info!(
             "SDL2 Chosen Video Driver: {}",
             video_subsystem.current_video_driver()
         );
@@ -76,7 +76,7 @@ impl Engine {
         let surface = unsafe { Surface::from_window_ref(Arc::clone(&instance), &window) }
             .expect("Failed to create surface from window ref");
 
-        eprintln!("Window Surface API: {:?}", surface.api());
+        info!("Window Surface API: {:?}", surface.api());
 
         let vulkan_system = VulkanSystem::new(
             surface,
@@ -263,19 +263,13 @@ impl<'a> BeforeRenderContext<'a> {
                 let mut commands = Vec::default();
 
                 #[cfg(feature = "ui-egui")]
+                if let Err(e) = self
+                    .engine
+                    .vulkan_pipelines
+                    .egui
+                    .prepare(&self.engine.egui_system)
                 {
-                    let mut builder = render_context.create_preparation_buffer_builder().unwrap();
-                    if let Err(e) = self
-                        .engine
-                        .vulkan_pipelines
-                        .egui
-                        .prepare(&mut builder, &self.engine.egui_system)
-                    {
-                        eprintln!("Failed to prepare rendering for egui: {e}");
-                        eprintln!("{e:?}");
-                    }
-
-                    commands.push(builder.build().unwrap());
+                    error!("Failed to prepare rendering for egui: {e}");
                 }
 
                 commands.extend(f1(RenderContext {
@@ -294,8 +288,7 @@ impl<'a> BeforeRenderContext<'a> {
                         .egui
                         .draw(&mut builder, &self.engine.egui_system)
                     {
-                        eprintln!("Failed to render egui: {e}");
-                        eprintln!("{e:?}");
+                        error!("Failed to render egui: {e}");
                     }
 
                     commands.push(builder.build().unwrap());

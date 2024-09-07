@@ -186,7 +186,7 @@ impl VulkanSystem {
 
     #[inline]
     pub fn pipeline_cache(&self) -> Option<&Arc<PipelineCache>> {
-        eprintln!("NO PipelineCache configured!");
+        info!("NO PipelineCache configured!");
         None
     }
 
@@ -244,8 +244,7 @@ impl VulkanSystem {
                     self.swapchain_is_new = true;
                 }
                 Err(e) => {
-                    eprintln!("{e}");
-                    eprintln!("{e:?}");
+                    error!("{e}");
                     // try again
                     self.recreate_swapchain = true;
                     return Ok(());
@@ -307,7 +306,30 @@ impl VulkanSystem {
             );
         }
 
-        for command in render_callback(&context) {
+        let callback_commands = render_callback(&context);
+
+        // collect all enqueued requests from other systems and insert it before the commands of
+        // the callback.
+        // TODO might need to extend to more systems in the future
+        if self.image_system.has_upload_info_enqueued() {
+            let mut buffer = context
+                .create_preparation_buffer_builder()
+                .expect("Failed to create preparation command buffer system updates");
+
+            while let Some(upload_request) = self.image_system.next_upload_info() {
+                if let Err(e) = buffer.copy_buffer_to_image(upload_request) {
+                    error!("Failed to enqueue copy_buffer_to_image-cmd: {e}");
+                }
+            }
+
+            prepare_commands.push(
+                buffer.build().expect(
+                    "Failed to build command buffer for preparation commands of sub-systems",
+                ),
+            )
+        }
+
+        for command in callback_commands {
             if command.inheritance_info().render_pass.is_none() {
                 prepare_commands.push(command);
             } else {
@@ -316,7 +338,7 @@ impl VulkanSystem {
         }
 
         if let Err(e) = primary.execute_commands_from_vec(prepare_commands) {
-            eprintln!("Failed to execute preparation commands: {e:?}");
+            error!("Failed to execute preparation commands: {e:?}");
         }
 
         primary
@@ -348,7 +370,7 @@ impl VulkanSystem {
             )?;
 
         if let Err(e) = primary.execute_commands_from_vec(render_commands) {
-            eprintln!("Failed to execute rendering commands: {e:?}");
+            error!("Failed to execute rendering commands: {e:?}");
         }
 
         primary.end_render_pass(SubpassEndInfo::default())?;
@@ -379,8 +401,8 @@ impl VulkanSystem {
             Err(e) => {
                 match e {
                     Validated::Error(VulkanError::OutOfDate) => {}
-                    Validated::Error(e) => eprintln!("Error: {e}"),
-                    Validated::ValidationError(e) => eprintln!("Validation Error: {e}"),
+                    Validated::Error(e) => error!("Error: {e}"),
+                    Validated::ValidationError(e) => error!("Validation Error: {e}"),
                 }
                 self.recreate_swapchain = true;
                 self.previous_frame_end =
@@ -404,12 +426,12 @@ fn choose_physical_device(
             let dynamic =
                 p.api_version() >= Version::V1_3 || p.supported_extensions().khr_dynamic_rendering;
             if dynamic {
-                eprintln!(
+                info!(
                     "Dynamic rendering supported on {}",
                     p.properties().device_name
                 );
             } else {
-                eprintln!(
+                warn!(
                     "Dynamic rendering not supported on {}",
                     p.properties().device_name
                 );
@@ -420,7 +442,7 @@ fn choose_physical_device(
             let satisfies_req_device_extensions =
                 p.supported_extensions().contains(&device_extensions);
             if !satisfies_req_device_extensions {
-                eprintln!(
+                warn!(
                     "Device is missing required device extensions {}",
                     p.properties().device_name
                 );
@@ -432,6 +454,7 @@ fn choose_physical_device(
                 .iter()
                 .enumerate()
                 .position(|(i, q)| {
+                    info!("Queue({i}) = {q:?}");
                     q.queue_flags.contains(QueueFlags::GRAPHICS)
                         && p.surface_support(i as u32, &surface).unwrap_or(false)
                 })
@@ -446,7 +469,7 @@ fn choose_physical_device(
             _ => 5,
         })
         .map(|(p, i)| {
-            eprintln!(
+            info!(
                 "Chosen physical device {} and with queue family index {i} and v{:?}",
                 p.properties().device_name,
                 p.api_version()
