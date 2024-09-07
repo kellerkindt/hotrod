@@ -32,12 +32,16 @@ impl ImageSystem {
     }
 
     /// Creates a new [`Image`] and enqueues an upload-request the given `rgba`-data as content.
-    pub fn create_and_upload_image(
+    pub fn create_image_and_enqueue_upload<I>(
         &self,
-        rgba: Vec<u8>,
+        rgba: I,
         width: u32,
         height: u32,
-    ) -> Result<Arc<Image>, UploadError> {
+    ) -> Result<Arc<Image>, UploadError>
+    where
+        I: IntoIterator<Item = u8>,
+        I::IntoIter: ExactSizeIterator,
+    {
         let image = self.create_image(width, height)?;
         self.enqueue_image_upload(Arc::clone(&image), rgba)?;
         Ok(image)
