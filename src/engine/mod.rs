@@ -88,7 +88,7 @@ impl Engine {
             BeautifulLinePipeline::REQUIRED_FEATURES,
         )?;
 
-        Ok(Self {
+        let mut this = Self {
             vulkan_pipelines: Arc::new(VulkanPipelines::try_from(&vulkan_system)?),
             #[cfg(feature = "ui-egui")]
             egui_system: system::egui::EguiSystem::default(),
@@ -111,7 +111,11 @@ impl Engine {
             font_renderer: FontRenderer::new(
                 builder.font_renderer_ttf.expect("Missing TrueType Font"),
             ),
-        })
+        };
+
+        this.set_fullscreen(builder.fullscreen);
+
+        Ok(this)
     }
 
     pub fn update<T>(&mut self, f: impl FnOnce(BeforeRenderContext) -> T) -> RenderResponse<T> {

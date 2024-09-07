@@ -8,6 +8,7 @@ pub struct EngineBuilder<'a> {
     pub(crate) window_title: Cow<'a, str>,
     pub(crate) window_width: u32,
     pub(crate) window_height: u32,
+    pub(crate) fullscreen: bool,
     pub(crate) instance_info: InstanceCreateInfo,
     pub(crate) target_frame_rate: u16,
     #[cfg(feature = "ttf-sdl2")]
@@ -51,6 +52,12 @@ impl EngineBuilder<'_> {
     }
 
     #[inline]
+    pub fn with_fullscreen(mut self, fullscreen: bool) -> Self {
+        self.fullscreen = fullscreen;
+        self
+    }
+
+    #[inline]
     pub fn with_target_frame_rate(mut self, target_frame_rate: u16) -> Self {
         self.target_frame_rate = target_frame_rate;
         self
@@ -79,6 +86,7 @@ impl Default for EngineBuilder<'static> {
             window_title: Cow::Borrowed("HotRod Engine - Default Configuration"),
             window_width: 1024,
             window_height: 768,
+            fullscreen: false,
             instance_info: InstanceCreateInfo::application_from_cargo_toml(),
             target_frame_rate: 60,
             #[cfg(feature = "ttf-sdl2")]
