@@ -2,6 +2,7 @@
 extern crate tracing;
 
 pub use cgmath;
+pub use crossbeam;
 pub use sdl2;
 pub use vulkano;
 
