@@ -11,6 +11,7 @@ pub struct EngineBuilder<'a> {
     pub(crate) fullscreen: bool,
     pub(crate) instance_info: InstanceCreateInfo,
     pub(crate) target_frame_rate: u16,
+    pub(crate) background_clear_color: Option<[f32; 4]>,
     #[cfg(feature = "ttf-sdl2")]
     pub(crate) font_renderer_ttf: Option<Cow<'static, [u8]>>,
 }
@@ -64,6 +65,12 @@ impl EngineBuilder<'_> {
     }
 
     #[inline]
+    pub fn with_background_clear_color(mut self, color: [f32; 4]) -> Self {
+        self.background_clear_color = Some(color);
+        self
+    }
+
+    #[inline]
     pub fn with_ttf_font_renderer(
         mut self,
         font_renderer_ttf: impl Into<Cow<'static, [u8]>>,
@@ -89,6 +96,7 @@ impl Default for EngineBuilder<'static> {
             fullscreen: false,
             instance_info: InstanceCreateInfo::application_from_cargo_toml(),
             target_frame_rate: 60,
+            background_clear_color: None,
             #[cfg(feature = "ttf-sdl2")]
             font_renderer_ttf: None,
         }

@@ -81,12 +81,16 @@ impl Engine {
 
         info!("Window Surface API: {:?}", surface.api());
 
-        let vulkan_system = VulkanSystem::new(
+        let mut vulkan_system = VulkanSystem::new(
             surface,
             builder.window_width,
             builder.window_height,
             BeautifulLinePipeline::REQUIRED_FEATURES,
         )?;
+
+        if let Some(clear_color) = builder.background_clear_color {
+            vulkan_system.set_clear_value(clear_color);
+        }
 
         let mut this = Self {
             vulkan_pipelines: Arc::new(VulkanPipelines::try_from(&vulkan_system)?),
