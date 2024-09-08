@@ -1,10 +1,9 @@
 use crate::engine::system::egui::EguiSystem;
 use crate::engine::system::vulkan::buffers::BasicBuffersManager;
-use crate::engine::system::vulkan::system::VulkanSystem;
+use crate::engine::system::vulkan::system::{GraphicsPipelineRenderPassInfo, VulkanSystem};
 use crate::engine::system::vulkan::textures::{
     ImageSamplerMode, ImageSystem, TextureId, TextureManager,
 };
-use crate::engine::system::vulkan::utils::pipeline::subpass_from_renderpass;
 use crate::engine::system::vulkan::{DrawError, PipelineCreateError, ShaderLoadError, UploadError};
 use crate::shader_from_path;
 use bytemuck::{Pod, Zeroable};
@@ -37,7 +36,6 @@ use vulkano::pipeline::{
     DynamicState, GraphicsPipeline, Pipeline, PipelineBindPoint, PipelineLayout,
     PipelineShaderStageCreateInfo,
 };
-use vulkano::render_pass::RenderPass;
 use vulkano::shader::EntryPoint;
 use vulkano::{Validated, VulkanError};
 
@@ -71,7 +69,7 @@ impl TryFrom<&VulkanSystem> for EguiPipeline {
         Self::new(
             Arc::clone(vs.device()),
             Arc::clone(vs.queue()),
-            Arc::clone(vs.render_pass()),
+            vs.graphics_pipeline_render_pass_info(),
             vs.pipeline_cache().map(Arc::clone),
             Arc::clone(vs.basic_buffers_manager()),
             Arc::clone(vs.image_system()),
@@ -83,12 +81,12 @@ impl EguiPipeline {
     pub fn new(
         device: Arc<Device>,
         queue: Arc<Queue>,
-        render_pass: Arc<RenderPass>,
+        render_pass_info: GraphicsPipelineRenderPassInfo,
         cache: Option<Arc<PipelineCache>>,
         buffers_manager: Arc<BasicBuffersManager>,
         image_system: Arc<ImageSystem>,
     ) -> Result<Self, PipelineCreateError> {
-        let pipeline = Self::create_pipeline(Arc::clone(&device), render_pass, cache)?;
+        let pipeline = Self::create_pipeline(Arc::clone(&device), render_pass_info, cache)?;
         let texture_manager =
             TextureManager::basic(Arc::clone(&device), &pipeline, ImageSamplerMode::Linear)?;
         Ok(Self {
@@ -118,7 +116,7 @@ impl EguiPipeline {
 
     fn create_pipeline(
         device: Arc<Device>,
-        render_pass: Arc<RenderPass>,
+        render_pass_info: GraphicsPipelineRenderPassInfo,
         cache: Option<Arc<PipelineCache>>,
     ) -> Result<Arc<GraphicsPipeline>, PipelineCreateError> {
         let vs = Self::load_vertex_shader(Arc::clone(&device))?;
@@ -150,9 +148,12 @@ impl EguiPipeline {
                 }),
                 viewport_state: Some(ViewportState::default()), // Some(ViewportState::viewport_dynamic_scissor_dynamic(1)),
                 rasterization_state: Some(RasterizationState::default()),
-                multisample_state: Some(MultisampleState::default()),
+                multisample_state: Some(MultisampleState {
+                    rasterization_samples: render_pass_info.rasterization_samples(),
+                    ..MultisampleState::default()
+                }),
                 color_blend_state: Some(ColorBlendState::with_attachment_states(
-                    1,
+                    render_pass_info.num_color_attachments(),
                     ColorBlendAttachmentState {
                         // was before - erroneous?
                         // .src_color_blend_factor = BlendFactor::One;
@@ -165,7 +166,7 @@ impl EguiPipeline {
                         ..ColorBlendAttachmentState::default()
                     },
                 )),
-                subpass: Some(subpass_from_renderpass(render_pass)?),
+                subpass: Some(render_pass_info.into_subpass_type()),
                 dynamic_state: [DynamicState::Viewport, DynamicState::Scissor]
                     .into_iter()
                     .collect(),

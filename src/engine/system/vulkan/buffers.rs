@@ -5,7 +5,7 @@ use vulkano::memory::allocator::{AllocationCreateInfo, MemoryAllocator, MemoryTy
 use vulkano::Validated;
 
 pub struct BasicBuffersManager {
-    memo_allocator: Arc<dyn MemoryAllocator>,
+    pub(crate) memo_allocator: Arc<dyn MemoryAllocator>,
 }
 
 impl BasicBuffersManager {

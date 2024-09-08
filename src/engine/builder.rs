@@ -1,6 +1,7 @@
 use crate::engine::{Engine, Error};
 use crate::support::image::RawRgbaImage;
 use std::borrow::Cow;
+use vulkano::image::SampleCount;
 use vulkano::instance::InstanceCreateInfo;
 
 pub struct EngineBuilder<'a> {
@@ -14,6 +15,7 @@ pub struct EngineBuilder<'a> {
     pub(crate) background_clear_color: Option<[f32; 4]>,
     #[cfg(feature = "ttf-sdl2")]
     pub(crate) font_renderer_ttf: Option<Cow<'static, [u8]>>,
+    pub(crate) msaa: Option<SampleCount>,
 }
 
 impl EngineBuilder<'_> {
@@ -80,6 +82,12 @@ impl EngineBuilder<'_> {
     }
 
     #[inline]
+    pub fn with_msaa(mut self, msaa: SampleCount) -> Self {
+        self.msaa = Some(msaa);
+        self
+    }
+
+    #[inline]
     pub fn build(self) -> Result<Engine, Error> {
         Engine::new(self)
     }
@@ -99,6 +107,7 @@ impl Default for EngineBuilder<'static> {
             background_clear_color: None,
             #[cfg(feature = "ttf-sdl2")]
             font_renderer_ttf: None,
+            msaa: None,
         }
     }
 }

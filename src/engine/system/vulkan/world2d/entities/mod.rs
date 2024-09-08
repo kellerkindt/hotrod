@@ -1,7 +1,6 @@
 use crate::engine::system::vulkan::buffers::BasicBuffersManager;
-use crate::engine::system::vulkan::system::VulkanSystem;
+use crate::engine::system::vulkan::system::{GraphicsPipelineRenderPassInfo, VulkanSystem};
 use crate::engine::system::vulkan::textures::{ImageSamplerMode, TextureId, TextureManager};
-use crate::engine::system::vulkan::utils::pipeline::subpass_from_renderpass;
 use crate::engine::system::vulkan::wds::WriteDescriptorSetManager;
 use crate::engine::system::vulkan::{DrawError, PipelineCreateError, ShaderLoadError};
 use crate::shader_from_path;
@@ -26,12 +25,11 @@ use vulkano::pipeline::{
     DynamicState, GraphicsPipeline, Pipeline, PipelineBindPoint, PipelineLayout,
     PipelineShaderStageCreateInfo,
 };
-use vulkano::render_pass::RenderPass;
 use vulkano::shader::EntryPoint;
 use vulkano::{Validated, VulkanError};
 
 /// This pipeline is used to draw the entities of 2d worlds. A 2d world entity consists of quadratic
-/// area at at certain point and an individual size.
+/// area at a certain point and an individual size.
 #[derive()]
 pub struct World2dEntitiesPipeline {
     pipeline: Arc<GraphicsPipeline>,
@@ -49,7 +47,7 @@ impl TryFrom<&VulkanSystem> for World2dEntitiesPipeline {
     fn try_from(vs: &VulkanSystem) -> Result<Self, Self::Error> {
         Self::new(
             Arc::clone(vs.device()),
-            Arc::clone(vs.render_pass()),
+            vs.graphics_pipeline_render_pass_info(),
             vs.pipeline_cache().map(Arc::clone),
             Arc::clone(vs.write_descriptor_set_manager()),
             Arc::clone(vs.basic_buffers_manager()),
@@ -60,12 +58,12 @@ impl TryFrom<&VulkanSystem> for World2dEntitiesPipeline {
 impl World2dEntitiesPipeline {
     pub fn new(
         device: Arc<Device>,
-        render_pass: Arc<RenderPass>,
+        render_pass_info: GraphicsPipelineRenderPassInfo,
         cache: Option<Arc<PipelineCache>>,
         write_descriptors: Arc<WriteDescriptorSetManager>,
         buffers_manager: Arc<BasicBuffersManager>,
     ) -> Result<Self, PipelineCreateError> {
-        let pipeline = Self::create_pipeline(Arc::clone(&device), render_pass, cache)?;
+        let pipeline = Self::create_pipeline(Arc::clone(&device), render_pass_info, cache)?;
         Ok(Self {
             quad_index_buffer: buffers_manager
                 .create_index_buffer([0, 1, 2, 2, 3, 0])?
@@ -91,7 +89,7 @@ impl World2dEntitiesPipeline {
 
     fn create_pipeline(
         device: Arc<Device>,
-        render_pass: Arc<RenderPass>,
+        render_pass_info: GraphicsPipelineRenderPassInfo,
         cache: Option<Arc<PipelineCache>>,
     ) -> Result<Arc<GraphicsPipeline>, PipelineCreateError> {
         let vs = Self::load_vertex_shader(Arc::clone(&device))?;
@@ -123,16 +121,19 @@ impl World2dEntitiesPipeline {
                 }),
                 viewport_state: Some(ViewportState::default()),
                 rasterization_state: Some(RasterizationState::default()),
-                multisample_state: Some(MultisampleState::default()),
+                multisample_state: Some(MultisampleState {
+                    rasterization_samples: render_pass_info.rasterization_samples(),
+                    ..MultisampleState::default()
+                }),
                 color_blend_state: Some(ColorBlendState::with_attachment_states(
-                    1,
+                    render_pass_info.num_color_attachments(),
                     ColorBlendAttachmentState {
                         blend: Some(AttachmentBlend::alpha()),
                         ..ColorBlendAttachmentState::default()
                     },
                 )),
                 dynamic_state: [DynamicState::Viewport].into_iter().collect(),
-                subpass: Some(subpass_from_renderpass(render_pass)?),
+                subpass: Some(render_pass_info.into_subpass_type()),
                 ..GraphicsPipelineCreateInfo::layout(layout)
             },
         )?)

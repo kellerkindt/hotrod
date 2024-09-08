@@ -29,9 +29,10 @@ use vulkano::device::{
 };
 use vulkano::format::Format;
 use vulkano::image::view::ImageView;
-use vulkano::image::{Image, ImageUsage};
-use vulkano::memory::allocator::StandardMemoryAllocator;
+use vulkano::image::{Image, ImageCreateInfo, ImageType, ImageUsage, SampleCount};
+use vulkano::memory::allocator::{AllocationCreateInfo, MemoryAllocator, StandardMemoryAllocator};
 use vulkano::pipeline::cache::PipelineCache;
+use vulkano::pipeline::graphics::subpass::PipelineSubpassType;
 use vulkano::pipeline::graphics::viewport::Viewport;
 use vulkano::render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass, Subpass};
 use vulkano::swapchain::{
@@ -55,6 +56,7 @@ pub struct VulkanSystem {
     image_system: Arc<ImageSystem>,
     basic_buffers_manager: Arc<BasicBuffersManager>,
     clear_value_rgba: [f32; 4],
+    samples: SampleCount,
 }
 
 impl VulkanSystem {
@@ -63,6 +65,7 @@ impl VulkanSystem {
         width: u32,
         height: u32,
         features: Features,
+        samples: SampleCount,
     ) -> Result<Self, Error> {
         let mut device_extensions = DeviceExtensions {
             khr_swapchain: true,
@@ -83,6 +86,7 @@ impl VulkanSystem {
                 } | features,
                 queue_create_infos: vec![QueueCreateInfo {
                     queue_family_index,
+
                     ..Default::default()
                 }],
                 ..Default::default()
@@ -90,20 +94,23 @@ impl VulkanSystem {
         )
         .map_err(Error::DeviceInitializationFailed)?;
 
-        let (swapchain, swapchain_images) = create_swapchain(&device, &surface, [width, height])?;
+        let (swapchain, swapchain_images) =
+            create_swapchain(&device, &surface, [width, height], samples)?;
         let render_pass = single_pass_render_pass_from_image_format(
             Arc::clone(&device),
             swapchain.image_format(),
+            samples,
         )
         .map_err(Error::FailedToCreateFramebuffers)?;
+
+        let basic_buffers_manager = Arc::new(BasicBuffersManager::new(
+            StandardMemoryAllocator::new_default(Arc::clone(&device)),
+        ));
 
         Self {
             image_system: Arc::new(ImageSystem::new(StandardMemoryAllocator::new_default(
                 Arc::clone(&device),
             ))?),
-            basic_buffers_manager: Arc::new(BasicBuffersManager::new(
-                StandardMemoryAllocator::new_default(Arc::clone(&device)),
-            )),
             cmd_allocator: StandardCommandBufferAllocator::new(
                 Arc::clone(&device),
                 StandardCommandBufferAllocatorCreateInfo {
@@ -116,8 +123,13 @@ impl VulkanSystem {
             recreate_swapchain: false,
             swapchain_is_new: false,
             previous_frame_end: Some(vulkano::sync::now(Arc::clone(&device)).boxed()),
-            swapchain_framebuffers: create_framebuffers(&swapchain_images, &render_pass)
-                .map_err(Error::FailedToCreateFramebuffers)?,
+            swapchain_framebuffers: create_framebuffers(
+                &basic_buffers_manager.memo_allocator,
+                &swapchain_images,
+                &render_pass,
+                samples,
+            )
+            .map_err(Error::FailedToCreateFramebuffers)?,
             swapchain,
             swapchain_images,
             render_pass,
@@ -130,6 +142,8 @@ impl VulkanSystem {
             )),
             device,
             clear_value_rgba: [0.0, 0.5, 1.0, 1.0], // blue-ish value
+            basic_buffers_manager,
+            samples,
         }
         .with_write_descriptors_initialized()
     }
@@ -180,8 +194,12 @@ impl VulkanSystem {
     }
 
     #[inline]
-    pub fn render_pass(&self) -> &Arc<RenderPass> {
+    pub fn render_pass_(&self) -> &Arc<RenderPass> {
         &self.render_pass
+    }
+
+    pub fn graphics_pipeline_render_pass_info(&self) -> GraphicsPipelineRenderPassInfo {
+        GraphicsPipelineRenderPassInfo(Arc::clone(&self.render_pass))
     }
 
     #[inline]
@@ -238,9 +256,13 @@ impl VulkanSystem {
                 Ok((new_swapchain, new_image)) => {
                     self.swapchain = new_swapchain;
                     self.swapchain_images = new_image;
-                    self.swapchain_framebuffers =
-                        create_framebuffers(&self.swapchain_images, &self.render_pass)
-                            .map_err(DrawError::FailedToRecreateTheFramebuffers)?;
+                    self.swapchain_framebuffers = create_framebuffers(
+                        &self.basic_buffers_manager.memo_allocator,
+                        &self.swapchain_images,
+                        &self.render_pass,
+                        self.samples,
+                    )
+                    .map_err(DrawError::FailedToRecreateTheFramebuffers)?;
                     self.swapchain_is_new = true;
                 }
                 Err(e) => {
@@ -344,7 +366,11 @@ impl VulkanSystem {
         primary
             .begin_render_pass(
                 RenderPassBeginInfo {
-                    clear_values: vec![Some(self.clear_value_rgba.into())],
+                    clear_values: if self.samples == SampleCount::Sample1 {
+                        vec![Some(self.clear_value_rgba.into())]
+                    } else {
+                        vec![Some(self.clear_value_rgba.into()), None]
+                    },
                     // clear_values: vec![Some([0.0, 0.0, 0.0, 1.0].into())],
                     ..RenderPassBeginInfo::framebuffer(Arc::clone(
                         &self.swapchain_framebuffers[swapchain_image_index as usize],
@@ -489,6 +515,7 @@ fn create_swapchain(
     device: &Arc<Device>,
     surface: &Arc<Surface>,
     image_extent: [u32; 2],
+    samples: SampleCount,
 ) -> Result<(Arc<Swapchain>, Vec<Arc<Image>>), Error> {
     let surface_capabilities = device
         .physical_device()
@@ -519,7 +546,11 @@ fn create_swapchain(
             min_image_count: surface_capabilities.min_image_count,
             image_format,
             image_extent,
-            image_usage: ImageUsage::COLOR_ATTACHMENT,
+            image_usage: if samples == SampleCount::Sample1 {
+                ImageUsage::COLOR_ATTACHMENT
+            } else {
+                ImageUsage::COLOR_ATTACHMENT | ImageUsage::TRANSFER_DST
+            },
             composite_alpha: surface_capabilities
                 .supported_composite_alpha
                 .into_iter()
@@ -532,17 +563,44 @@ fn create_swapchain(
 }
 
 fn create_framebuffers(
+    allocator: &Arc<dyn MemoryAllocator>,
     images: &[Arc<Image>],
     render_pass: &Arc<RenderPass>,
+    sample_count: SampleCount,
 ) -> Result<Vec<Arc<Framebuffer>>, Validated<VulkanError>> {
     images
         .iter()
         .map(|image| {
             Framebuffer::new(
                 Arc::clone(&render_pass),
-                FramebufferCreateInfo {
-                    attachments: vec![ImageView::new_default(Arc::clone(image))?],
-                    ..FramebufferCreateInfo::default()
+                if sample_count == SampleCount::Sample1 {
+                    FramebufferCreateInfo {
+                        attachments: vec![ImageView::new_default(Arc::clone(image))?],
+                        ..FramebufferCreateInfo::default()
+                    }
+                } else {
+                    FramebufferCreateInfo {
+                        attachments: vec![
+                            ImageView::new_default(
+                                Image::new(
+                                    Arc::clone(&allocator),
+                                    ImageCreateInfo {
+                                        image_type: ImageType::Dim2d,
+                                        format: image.format(),
+                                        extent: image.extent(),
+                                        usage: ImageUsage::COLOR_ATTACHMENT
+                                            | ImageUsage::TRANSIENT_ATTACHMENT,
+                                        samples: sample_count,
+                                        ..Default::default()
+                                    },
+                                    AllocationCreateInfo::default(),
+                                )
+                                .unwrap(),
+                            )?,
+                            ImageView::new_default(Arc::clone(image))?,
+                        ],
+                        ..FramebufferCreateInfo::default()
+                    }
                 },
             )
         })
@@ -630,5 +688,40 @@ impl<'a> RenderContext<'a> {
     #[inline]
     pub fn image_system(&self) -> &ImageSystem {
         self.image_system
+    }
+}
+
+#[derive(Clone)]
+pub struct GraphicsPipelineRenderPassInfo(Arc<RenderPass>);
+
+impl GraphicsPipelineRenderPassInfo {
+    #[inline]
+    pub fn render_pass(&self) -> &Arc<RenderPass> {
+        &self.0
+    }
+
+    #[inline]
+    pub fn into_subpass(self) -> Subpass {
+        Subpass::from(self.0, 0).expect("There must always be at least one subpass")
+    }
+
+    #[inline]
+    pub fn into_subpass_type(self) -> PipelineSubpassType {
+        self.into_subpass().into()
+    }
+
+    #[inline]
+    fn subpass(&self) -> Subpass {
+        Subpass::from(Arc::clone(&self.0), 0).expect("There must always be at least one subpass")
+    }
+
+    #[inline]
+    pub fn rasterization_samples(&self) -> SampleCount {
+        self.subpass().num_samples().unwrap_or(SampleCount::Sample1)
+    }
+
+    #[inline]
+    pub fn num_color_attachments(&self) -> u32 {
+        self.subpass().num_color_attachments()
     }
 }

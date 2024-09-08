@@ -12,6 +12,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use system::vulkan::system::VulkanSystem;
 use vulkano::command_buffer::SecondaryAutoCommandBuffer;
+use vulkano::image::SampleCount;
 use vulkano::instance::{Instance, InstanceExtensions};
 use vulkano::swapchain::Surface;
 use vulkano::{LoadingError, Validated, VulkanError, VulkanLibrary};
@@ -85,6 +86,7 @@ impl Engine {
             builder.window_width,
             builder.window_height,
             BeautifulLinePipeline::REQUIRED_FEATURES,
+            builder.msaa.unwrap_or(SampleCount::Sample1),
         )?;
 
         if let Some(clear_color) = builder.background_clear_color {
