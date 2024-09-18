@@ -25,7 +25,7 @@ thiserror = { version = "1.0.40", features = [] }
 nohash-hasher = "0.2.0"
 crossbeam = "0.8.4"
 tracing = "0.1.40"
-fnv = "1.0.7"
+rustc-hash = "2.0.0"
 
 tracing-subscriber = { version = "0.3.18", optional = true }
 

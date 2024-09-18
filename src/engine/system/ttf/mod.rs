@@ -3,7 +3,7 @@ use crate::engine::system::vulkan::textures::{ImageSystem, TextureId};
 use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
 use crossbeam::queue::SegQueue;
-use fnv::FnvHashMap;
+use rustc_hash::FxHashMap;
 use sdl2::pixels::{Color, PixelFormatEnum};
 use sdl2::rwops::RWops;
 use sdl2::ttf::{Font, Sdl2TtfContext};
@@ -15,7 +15,7 @@ type CacheUpdate = (String, Vec<u8>, u32, u32);
 
 pub struct FontRenderer {
     dummy_image: Option<TextureId<TexturedPipeline>>,
-    cache: FnvHashMap<String, (TextureId<TexturedPipeline>, f32, f32, u8)>,
+    cache: FxHashMap<String, (TextureId<TexturedPipeline>, f32, f32, u8)>,
     sender: Sender<FontRenderRequest>,
     update_queue: Arc<SegQueue<CacheUpdate>>,
 }
@@ -32,7 +32,7 @@ impl FontRenderer {
 
         Self {
             dummy_image: None,
-            cache: FnvHashMap::default(),
+            cache: FxHashMap::default(),
             sender,
             update_queue,
         }
@@ -180,7 +180,7 @@ struct FontRenderRequest {
 struct FontRendererThread<'a> {
     ctx: &'a Sdl2TtfContext,
     ttf: &'a [u8],
-    fonts: FnvHashMap<u16, Font<'a, 'a>>,
+    fonts: FxHashMap<u16, Font<'a, 'a>>,
     receiver: Receiver<FontRenderRequest>,
     result_queue: Arc<SegQueue<CacheUpdate>>,
 }
