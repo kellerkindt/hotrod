@@ -1,7 +1,6 @@
 use crate::support::image::RawRgbaImage;
 use sdl2::pixels::PixelFormatEnum;
 use sdl2::surface::Surface;
-use sdl2::ttf::Sdl2TtfContext;
 use sdl2::video::Window;
 use sdl2::{EventPump, Sdl, VideoSubsystem};
 
@@ -11,7 +10,7 @@ pub struct SdlParts {
     pub window: Window,
     pub window_maximized: bool,
     #[cfg(feature = "ttf-sdl2")]
-    pub ttf: Sdl2TtfContext,
+    pub ttf: sdl2::ttf::Sdl2TtfContext,
     pub context: Sdl,
     pub window_icon: Option<Surface<'static>>,
 }

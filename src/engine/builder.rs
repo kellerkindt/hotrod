@@ -73,6 +73,7 @@ impl EngineBuilder<'_> {
     }
 
     #[inline]
+    #[cfg(feature = "ttf-sdl2")]
     pub fn with_ttf_font_renderer(
         mut self,
         font_renderer_ttf: impl Into<Cow<'static, [u8]>>,
