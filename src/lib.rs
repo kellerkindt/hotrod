@@ -11,6 +11,7 @@ pub use thiserror;
 pub use vulkano;
 
 pub mod engine;
+pub mod hint;
 pub mod support;
 pub mod ui;
 
