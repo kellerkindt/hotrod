@@ -112,7 +112,7 @@ impl Engine {
             .maybe_with_window_icon(builder.window_icon),
             framerate_manager: FpsManager::new(builder.target_frame_rate),
             #[cfg(feature = "ttf-font-renderer")]
-            font_renderer: FontRenderer::new(
+            font_renderer: crate::engine::system::ttf::FontRenderer::new(
                 builder.font_renderer_ttf.expect("Missing TrueType Font"),
             ),
         };
@@ -305,7 +305,7 @@ pub struct RenderContext<'a, 'b> {
     pub width: u32,
     pub height: u32,
     #[cfg(feature = "ttf-font-renderer")]
-    pub font_renderer: &'a mut FontRenderer,
+    pub font_renderer: &'a mut crate::engine::system::ttf::FontRenderer,
 }
 
 pub struct RenderResponse<T> {
