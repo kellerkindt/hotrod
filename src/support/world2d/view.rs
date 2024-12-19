@@ -58,6 +58,11 @@ impl Map2dView {
         Dim::new(dim.x * self.zoom, dim.y * self.zoom)
     }
 
+    #[inline]
+    pub fn scalar_distance_world_to_screen(&self, value: f32) -> f32 {
+        value * self.zoom
+    }
+
     pub fn update_zoom_at_screen_position(&mut self, new_zoom: f32, pos: Pos<f32>) {
         let world_pos_before = self.position_screen_to_world(pos);
         self.zoom = new_zoom;
