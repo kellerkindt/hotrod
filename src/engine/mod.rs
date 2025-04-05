@@ -32,6 +32,7 @@ pub struct Engine {
     // drop after the vulkan system! (last is fine, too)
     sdl: SdlParts,
     framerate_manager: FpsManager,
+    last_render_call: Option<Instant>,
 }
 
 impl Engine {
@@ -115,6 +116,7 @@ impl Engine {
             font_renderer: crate::engine::system::ttf::FontRenderer::new(
                 builder.font_renderer_ttf.expect("Missing TrueType Font"),
             ),
+            last_render_call: None,
         };
 
         this.set_fullscreen(builder.fullscreen);
@@ -255,6 +257,8 @@ impl<'a> BeforeRenderContext<'a> {
     where
         F1: FnOnce(RenderContext) -> Vec<Arc<SecondaryAutoCommandBuffer>>,
     {
+        let this_render_call = Instant::now();
+
         self.engine
             .vulkan_system
             .render(self.width, self.height, |render_context| {
@@ -277,6 +281,11 @@ impl<'a> BeforeRenderContext<'a> {
                     height: self.height,
                     #[cfg(feature = "ttf-font-renderer")]
                     font_renderer: &mut self.engine.font_renderer,
+                    last_render_call: core::mem::replace(
+                        &mut self.engine.last_render_call,
+                        Some(this_render_call),
+                    ),
+                    this_render_call,
                 }));
 
                 #[cfg(feature = "ui-egui")]
@@ -304,6 +313,10 @@ pub struct RenderContext<'a, 'b> {
     pub pipelines: &'a Arc<VulkanPipelines>,
     pub width: u32,
     pub height: u32,
+    /// The time of the previous render call.
+    pub last_render_call: Option<Instant>,
+    /// The time of this render call.
+    pub this_render_call: Instant,
     #[cfg(feature = "ttf-font-renderer")]
     pub font_renderer: &'a mut crate::engine::system::ttf::FontRenderer,
 }
