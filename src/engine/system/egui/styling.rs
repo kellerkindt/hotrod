@@ -9,7 +9,7 @@ pub trait StylableContextExt {
     fn stylable_window<R>(
         &self,
         id: impl Into<Id>,
-        conf: impl FnOnce(Frame) -> Frame,
+        conf: impl FnOnce(Area, Frame) -> (Area, Frame),
         ui: impl FnOnce(&mut Ui) -> R,
     ) -> StylableResponse<R>;
 }
@@ -22,6 +22,13 @@ pub trait StylableUiExt {
         conf: impl FnOnce(Frame) -> Frame,
         add_contents: impl FnOnce(&mut Ui) -> R,
     ) -> StylableResponse<Option<R>>;
+
+    #[must_use]
+    fn stylized_frame<R>(
+        &mut self,
+        conf: impl FnOnce(Frame) -> Frame,
+        add_contents: impl FnOnce(&mut Ui) -> R,
+    ) -> StylableResponse<R>;
 }
 
 #[must_use]
@@ -70,12 +77,13 @@ impl StylableContextExt for Context {
     fn stylable_window<R>(
         &self,
         id: impl Into<Id>,
-        conf: impl FnOnce(Frame) -> Frame,
+        conf: impl FnOnce(Area, Frame) -> (Area, Frame),
         ui_cb: impl FnOnce(&mut Ui) -> R,
     ) -> StylableResponse<R> {
-        let response = Area::new(id).show(self, |ui| {
+        let (area, frame) = conf(Area::new(id), Frame::none());
+        let response = area.show(self, |ui| {
             let idx = ui.painter().add(Shape::Noop);
-            let response = conf(Frame::none()).show(ui, ui_cb);
+            let response = frame.show(ui, ui_cb);
             (idx, response)
         });
         StylableResponse {
@@ -101,6 +109,20 @@ impl StylableUiExt for Ui {
             idx,
             response: response.response,
             returned: response.inner.body_returned,
+        }
+    }
+
+    fn stylized_frame<R>(
+        &mut self,
+        conf: impl FnOnce(Frame) -> Frame,
+        add_contents: impl FnOnce(&mut Ui) -> R,
+    ) -> StylableResponse<R> {
+        let idx = self.painter().add(Shape::Noop);
+        let response = conf(Frame::none()).show(self, add_contents);
+        StylableResponse {
+            idx,
+            response: response.response,
+            returned: response.inner,
         }
     }
 }
