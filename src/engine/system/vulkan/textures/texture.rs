@@ -130,6 +130,13 @@ impl<T> TextureId<T> {
     }
 }
 
+impl<T> PartialEq for TextureId<T> {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
 pub struct TextureInner<T> {
     pub origin: Arc<()>,
     pub _image: Arc<Image>,

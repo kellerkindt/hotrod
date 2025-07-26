@@ -253,6 +253,11 @@ impl<'a> BeforeRenderContext<'a> {
             .update(self.width, self.height, &mut self.engine.sdl, f)
     }
 
+    #[inline]
+    pub fn pipelines(&self) -> &Arc<VulkanPipelines> {
+        &self.engine.vulkan_pipelines
+    }
+
     pub fn render<F1>(self, f1: F1) -> Result<(), DrawError>
     where
         F1: FnOnce(RenderContext) -> Vec<Arc<SecondaryAutoCommandBuffer>>,
