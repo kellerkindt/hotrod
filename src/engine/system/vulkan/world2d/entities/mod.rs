@@ -155,6 +155,52 @@ impl World2dEntitiesPipeline {
         )
     }
 
+    pub fn prepare_draw<I>(
+        &self,
+        texture: &TextureId<Self>,
+        tiles: I,
+    ) -> Result<EntityPreparedDraw, DrawError>
+    where
+        I: IntoIterator<Item = EntityInstanceData>,
+        I::IntoIter: ExactSizeIterator,
+    {
+        if self.texture_manager.is_origin_of(texture) {
+            let vertex_buffer = self.buffers_manager.create_vertex_buffer(tiles)?;
+            Ok(EntityPreparedDraw {
+                vertex_buffer,
+                texture_id: texture.clone(),
+            })
+        } else {
+            todo!()
+        }
+    }
+
+    #[inline]
+    pub fn draw_prepared<'a, P, I>(
+        &self,
+        builder: &mut AutoCommandBufferBuilder<P>,
+        prepared: I,
+    ) -> Result<(), DrawError>
+    where
+        I: Iterator<Item = &'a EntityPreparedDraw> + 'a,
+    {
+        let mut prepared = prepared.peekable();
+
+        // Call draw_with in batches so that for each batch the TextureId is the same
+        while let Some(texture) = prepared.peek().map(|p| p.texture_id.clone()) {
+            self.draw_with(
+                builder,
+                &texture,
+                (&mut prepared)
+                    .take_while(|prepared| prepared.texture_id == texture)
+                    .map(|prepared| prepared.vertex_buffer.clone()),
+            )?;
+        }
+
+        Ok(())
+    }
+
+    #[inline]
     pub fn draw<P, I>(
         &self,
         builder: &mut AutoCommandBufferBuilder<P>,
@@ -165,10 +211,20 @@ impl World2dEntitiesPipeline {
         I: IntoIterator<Item = EntityInstanceData>,
         I::IntoIter: ExactSizeIterator,
     {
-        if self.texture_manager.is_origin_of(texture) {
-            let vertex_buffer = self.buffers_manager.create_vertex_buffer(tiles)?;
-            let instance_count = vertex_buffer.len() as u32;
+        let vertex_buffer = self.buffers_manager.create_vertex_buffer(tiles)?;
+        self.draw_with(builder, texture, Some(vertex_buffer).into_iter())
+    }
 
+    fn draw_with<P, I>(
+        &self,
+        builder: &mut AutoCommandBufferBuilder<P>,
+        texture: &TextureId<Self>,
+        vertex_buffers: I,
+    ) -> Result<(), DrawError>
+    where
+        I: Iterator<Item = Subbuffer<[EntityInstanceData]>>,
+    {
+        if self.texture_manager.is_origin_of(texture) {
             builder
                 .bind_pipeline_graphics(Arc::clone(&self.pipeline))?
                 .bind_descriptor_sets(
@@ -177,15 +233,20 @@ impl World2dEntitiesPipeline {
                     0,
                     Arc::clone(&texture.0.descriptor),
                 )?
-                .bind_index_buffer(self.quad_index_buffer.clone())?
-                .bind_vertex_buffers(
-                    0,
-                    [
-                        self.quad_vertex_buffer.as_bytes().clone(),
-                        vertex_buffer.into_bytes(),
-                    ],
-                )?
-                .draw_indexed(6, instance_count, 0, 0, 0)?;
+                .bind_index_buffer(self.quad_index_buffer.clone())?;
+
+            for vertex_buffer in vertex_buffers {
+                let instance_count = vertex_buffer.len() as u32;
+                builder
+                    .bind_vertex_buffers(
+                        0,
+                        [
+                            self.quad_vertex_buffer.as_bytes().clone(),
+                            vertex_buffer.into_bytes(),
+                        ],
+                    )?
+                    .draw_indexed(6, instance_count, 0, 0, 0)?;
+            }
 
             Ok(())
         } else {
@@ -223,4 +284,9 @@ pub struct EntityInstanceData {
     pub uv1: [f32; 2],
     #[format(R32_SFLOAT)]
     pub size: f32,
+}
+
+pub struct EntityPreparedDraw {
+    vertex_buffer: Subbuffer<[EntityInstanceData]>,
+    texture_id: TextureId<World2dEntitiesPipeline>,
 }
