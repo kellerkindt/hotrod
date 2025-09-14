@@ -1,7 +1,7 @@
 use crate::engine::parts::sdl::SdlParts;
 use crate::ui::egui::ClippedPrimitive;
 use binding::Sdl2EguiMapping;
-use egui::{Context, CursorIcon, Key, RawInput, TexturesDelta};
+use egui::{Context, CursorIcon, Key, OutputCommand, RawInput, TexturesDelta};
 use sdl2::clipboard::ClipboardUtil;
 use sdl2::event::Event;
 
@@ -65,8 +65,13 @@ impl EguiSystem {
         let input = RawInputShim(self.binding.take_input())
             .with_injected_shortcuts(|| sdl.video_subsystem.clipboard());
 
-        let output = self.context.run(input, |ctx| {
-            ui(&ctx);
+        let output = self.context.run(input, {
+            let mut ui = Some(ui);
+            move |ctx| {
+                if let Some(ui) = ui.take() {
+                    ui(ctx);
+                }
+            }
         });
 
         if self
@@ -83,13 +88,15 @@ impl EguiSystem {
             }
         }
 
-        if !output.platform_output.copied_text.is_empty() {
-            if let Err(e) = sdl
-                .video_subsystem
-                .clipboard()
-                .set_clipboard_text(&output.platform_output.copied_text)
-            {
-                error!("Failed to update clipboard text: {e}");
+        for command in &output.platform_output.commands {
+            match command {
+                OutputCommand::CopyText(text) => {
+                    if let Err(e) = sdl.video_subsystem.clipboard().set_clipboard_text(text) {
+                        error!("Failed to update clipboard text: {e}");
+                    }
+                }
+                OutputCommand::CopyImage(_) => {}
+                OutputCommand::OpenUrl(_) => {}
             }
         }
 

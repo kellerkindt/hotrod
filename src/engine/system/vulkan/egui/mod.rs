@@ -100,6 +100,7 @@ impl EguiPipeline {
                         magnification: TextureFilter::Linear,
                         minification: TextureFilter::Linear,
                         wrap_mode: TextureWrapMode::ClampToEdge,
+                        mipmap_mode: None,
                     },
                     Arc::clone(&texture_manager.sampler()),
                 )]
@@ -395,10 +396,6 @@ impl EguiPipeline {
                     .pixels
                     .iter()
                     .flat_map(Color32::to_array)
-                    .collect::<Vec<_>>(),
-                ImageData::Font(font_data) => font_data
-                    .srgba_pixels(None) // TODO
-                    .flat_map(|c| c.to_array())
                     .collect::<Vec<_>>(),
             },
         )?;

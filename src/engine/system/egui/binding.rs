@@ -1,6 +1,6 @@
 use egui::{
-    CursorIcon, DroppedFile, HoveredFile, Key, PointerButton, Pos2, RawInput, Rect, Vec2,
-    ViewportEvent, ViewportId, ViewportInfo,
+    CursorIcon, DroppedFile, HoveredFile, Key, MouseWheelUnit, PointerButton, Pos2, RawInput, Rect,
+    Vec2, ViewportEvent, ViewportId, ViewportInfo,
 };
 use sdl2::event::{Event, WindowEvent};
 use sdl2::keyboard::Keycode;
@@ -42,6 +42,7 @@ impl Sdl2EguiMapping {
             hovered_files: core::mem::take(&mut self.input.hovered_files),
             dropped_files: core::mem::take(&mut self.input.dropped_files),
             focused: self.input.focused,
+            system_theme: None,
         }
     }
 
@@ -245,10 +246,15 @@ impl Sdl2EguiMapping {
                     modifiers: self.input.modifiers,
                 });
             }
-            Event::MouseWheel { x, y, .. } => self
-                .input
-                .events
-                .push(egui::Event::Scroll(Vec2::new(*x as f32, *y as f32))),
+            Event::MouseWheel {
+                precise_x,
+                precise_y,
+                ..
+            } => self.input.events.push(egui::Event::MouseWheel {
+                unit: MouseWheelUnit::Point,
+                delta: Vec2::new(*precise_x, *precise_y),
+                modifiers: self.input.modifiers,
+            }),
             Event::DropFile { filename, .. } => {
                 self.input.hovered_files.push(HoveredFile {
                     path: Some(PathBuf::from(filename)),

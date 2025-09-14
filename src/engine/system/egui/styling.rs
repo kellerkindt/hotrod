@@ -80,7 +80,7 @@ impl StylableContextExt for Context {
         conf: impl FnOnce(Area, Frame) -> (Area, Frame),
         ui_cb: impl FnOnce(&mut Ui) -> R,
     ) -> StylableResponse<R> {
-        let (area, frame) = conf(Area::new(id), Frame::none());
+        let (area, frame) = conf(Area::new(id.into()), Frame::NONE);
         let response = area.show(self, |ui| {
             let idx = ui.painter().add(Shape::Noop);
             let response = frame.show(ui, ui_cb);
@@ -102,7 +102,7 @@ impl StylableUiExt for Ui {
         add_contents: impl FnOnce(&mut Ui) -> R,
     ) -> StylableResponse<Option<R>> {
         let idx = self.painter().add(Shape::Noop);
-        let response = conf(Frame::none()).show(self, |ui| {
+        let response = conf(Frame::NONE).show(self, |ui| {
             CollapsingHeader::new(heading).show(ui, add_contents)
         });
         StylableResponse {
@@ -118,7 +118,7 @@ impl StylableUiExt for Ui {
         add_contents: impl FnOnce(&mut Ui) -> R,
     ) -> StylableResponse<R> {
         let idx = self.painter().add(Shape::Noop);
-        let response = conf(Frame::none()).show(self, add_contents);
+        let response = conf(Frame::NONE).show(self, add_contents);
         StylableResponse {
             idx,
             response: response.response,
