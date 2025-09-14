@@ -229,7 +229,6 @@ fn main() {
                     );
                 }
 
-                // #[cfg(feature = "ttf-sdl2")]
                 if let Some((ttf, ratio)) = &ttf {
                     let width = 500.0;
                     layer.draw_textured_rect(
@@ -237,6 +236,24 @@ fn main() {
                         Dim::new(width, width * ratio),
                         ttf.clone(),
                     );
+                }
+
+                #[cfg(feature = "ttf-font-renderer")]
+                {
+                    let prepared = context.font_renderer.prepare_render(
+                        &context.pipelines.texture,
+                        context.inner.image_system(),
+                        "The FontRenderer Text",
+                        24,
+                        [255, 255, 0, 255],
+                        50.0,
+                        400.0,
+                    );
+                    context
+                        .pipelines
+                        .texture
+                        .draw(&mut commands, &[prepared])
+                        .unwrap();
                 }
 
                 buffers.push(layer.flush(context.inner, context.pipelines));
