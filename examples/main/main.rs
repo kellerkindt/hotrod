@@ -70,7 +70,7 @@ fn main() {
                 let mut buffers = Vec::default();
 
                 if texture.is_none() {
-                    let image = image::io::Reader::new(Cursor::new(IMAGE_DATA))
+                    let image = image::ImageReader::new(Cursor::new(IMAGE_DATA))
                         .with_guessed_format()
                         .unwrap()
                         .decode()
