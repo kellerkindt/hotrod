@@ -22,7 +22,7 @@ cgmath = "0.18.0"
 vulkano = { version = "0.35.2" }
 vulkano-shaders = { version = "0.35.0" }
 bytemuck = "1.13.0"
-thiserror = { version = "1.0.40", features = [] }
+thiserror = { version = "2", features = [] }
 nohash-hasher = "0.2.0"
 crossbeam = "0.8.4"
 tracing = "0.1.40"
