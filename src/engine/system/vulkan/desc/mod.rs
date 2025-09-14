@@ -1,7 +1,6 @@
 use crate::engine::system::vulkan::Error;
 use std::sync::Arc;
 use vulkano::buffer::{Buffer, BufferContents, BufferCreateInfo, BufferUsage};
-use vulkano::command_buffer::allocator::CommandBufferAllocator;
 use vulkano::command_buffer::AutoCommandBufferBuilder;
 use vulkano::descriptor_set::{WriteDescriptorSet, WriteDescriptorSetElements};
 use vulkano::memory::allocator::{
@@ -42,9 +41,9 @@ pub trait WriteDescriptorSetOrigin {
         ))
     }
 
-    fn update<T, A: CommandBufferAllocator>(
+    fn update<T>(
         &self,
-        cmds: &mut AutoCommandBufferBuilder<T, A>,
+        cmds: &mut AutoCommandBufferBuilder<T>,
         current: &WriteDescriptorSet,
     ) -> Result<(), Error> {
         if let WriteDescriptorSetElements::Buffer(buffer) = current.elements() {

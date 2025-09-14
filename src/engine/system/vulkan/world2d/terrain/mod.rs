@@ -1,6 +1,7 @@
 use crate::engine::system::vulkan::buffers::BasicBuffersManager;
 use crate::engine::system::vulkan::system::{GraphicsPipelineRenderPassInfo, VulkanSystem};
 use crate::engine::system::vulkan::textures::{ImageSamplerMode, TextureId, TextureManager};
+use crate::engine::system::vulkan::utils::Draw;
 use crate::engine::system::vulkan::wds::WriteDescriptorSetManager;
 use crate::engine::system::vulkan::{DrawError, PipelineCreateError, ShaderLoadError};
 use crate::shader_from_path;
@@ -96,8 +97,8 @@ impl World2dTerrainPipeline {
         let vs = Self::load_vertex_shader(Arc::clone(&device))?;
         let fs = Self::load_fragment_shader(Arc::clone(&device))?;
 
-        let vertex_input_state = [Vertex2d::per_vertex(), InstanceData::per_instance()]
-            .definition(&vs.info().input_interface)?;
+        let vertex_input_state =
+            [Vertex2d::per_vertex(), InstanceData::per_instance()].definition(&vs)?;
 
         let stages = [
             PipelineShaderStageCreateInfo::new(vs),
@@ -246,7 +247,7 @@ impl World2dTerrainPipeline {
                             vertex_buffer.into_bytes(),
                         ],
                     )?
-                    .draw_indexed(6, instance_count, 0, 0, 0)?;
+                    .hotrod_draw_indexed(6, instance_count, 0, 0, 0)?;
             }
 
             Ok(())

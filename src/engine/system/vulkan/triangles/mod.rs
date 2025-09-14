@@ -1,13 +1,14 @@
 use crate::engine::system::vulkan::buffers::BasicBuffersManager;
 use crate::engine::system::vulkan::system::{GraphicsPipelineRenderPassInfo, VulkanSystem};
+use crate::engine::system::vulkan::utils::Draw;
 use crate::engine::system::vulkan::wds::WriteDescriptorSetManager;
 use crate::engine::system::vulkan::{DrawError, PipelineCreateError, ShaderLoadError};
 use crate::shader_from_path;
 use bytemuck::{Pod, Zeroable};
 use std::sync::Arc;
 use vulkano::command_buffer::AutoCommandBufferBuilder;
-use vulkano::descriptor_set::PersistentDescriptorSet;
-use vulkano::device::{Device, Features};
+use vulkano::descriptor_set::DescriptorSet;
+use vulkano::device::{Device, DeviceFeatures};
 use vulkano::pipeline::cache::PipelineCache;
 use vulkano::pipeline::graphics::color_blend::{
     AttachmentBlend, ColorBlendAttachmentState, ColorBlendState,
@@ -29,7 +30,7 @@ use vulkano::shader::EntryPoint;
 pub struct TrianglesPipeline {
     pipeline: Arc<GraphicsPipeline>,
     buffers_manager: Arc<BasicBuffersManager>,
-    descriptor_set: Arc<PersistentDescriptorSet>,
+    descriptor_set: Arc<DescriptorSet>,
 }
 
 impl TryFrom<&VulkanSystem> for TrianglesPipeline {
@@ -48,9 +49,9 @@ impl TryFrom<&VulkanSystem> for TrianglesPipeline {
 }
 
 impl TrianglesPipeline {
-    pub const REQUIRED_FEATURES: Features = Features {
+    pub const REQUIRED_FEATURES: DeviceFeatures = DeviceFeatures {
         dynamic_rendering: true,
-        ..Features::empty()
+        ..DeviceFeatures::empty()
     };
 
     pub fn new(
@@ -77,7 +78,7 @@ impl TrianglesPipeline {
         let vs = Self::load_vertex_shader(Arc::clone(&device))?;
         let fs = Self::load_fragment_shader(Arc::clone(&device))?;
 
-        let vertex_input_state = Vertex2d::per_vertex().definition(&vs.info().input_interface)?;
+        let vertex_input_state = Vertex2d::per_vertex().definition(&vs)?;
 
         let stages = [
             PipelineShaderStageCreateInfo::new(vs),
@@ -172,7 +173,7 @@ impl TrianglesPipeline {
                         triangles.color[3],
                     ],
                 )?
-                .draw(triangles.vertices.len() as u32, 1, offset, 0)?;
+                .hotrod_draw(triangles.vertices.len() as u32, 1, offset, 0)?;
             offset += triangles.vertices.len() as u32;
         }
 
@@ -226,7 +227,7 @@ impl TrianglesPipeline {
                         triangles.color[3],
                     ],
                 )?
-                .draw_indexed(index_count, 1, offset_indices, offset_vertices, 0)?;
+                .hotrod_draw_indexed(index_count, 1, offset_indices, offset_vertices, 0)?;
 
             offset_vertices += triangles.vertices.len() as i32;
             offset_indices += index_count as u32;

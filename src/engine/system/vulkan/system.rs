@@ -10,8 +10,7 @@ use std::borrow::Borrow;
 use std::sync::Arc;
 use std::time::Duration;
 use vulkano::command_buffer::allocator::{
-    CommandBufferAllocator, StandardCommandBufferAllocator,
-    StandardCommandBufferAllocatorCreateInfo,
+    StandardCommandBufferAllocator, StandardCommandBufferAllocatorCreateInfo,
 };
 use vulkano::command_buffer::{
     AutoCommandBufferBuilder, CommandBufferInheritanceInfo, CommandBufferInheritanceRenderPassInfo,
@@ -25,7 +24,7 @@ use vulkano::descriptor_set::allocator::{
 use vulkano::descriptor_set::WriteDescriptorSet;
 use vulkano::device::physical::{PhysicalDevice, PhysicalDeviceType};
 use vulkano::device::{
-    Device, DeviceCreateInfo, DeviceExtensions, Features, Queue, QueueCreateInfo, QueueFlags,
+    Device, DeviceCreateInfo, DeviceExtensions, DeviceFeatures, Queue, QueueCreateInfo, QueueFlags,
 };
 use vulkano::format::Format;
 use vulkano::image::view::ImageView;
@@ -52,7 +51,7 @@ pub struct VulkanSystem {
     swapchain_is_new: bool,
     previous_frame_end: Option<Box<dyn GpuFuture>>,
     write_descriptors: Arc<WriteDescriptorSetManager>,
-    cmd_allocator: StandardCommandBufferAllocator,
+    cmd_allocator: Arc<StandardCommandBufferAllocator>,
     image_system: Arc<ImageSystem>,
     basic_buffers_manager: Arc<BasicBuffersManager>,
     clear_value_rgba: [f32; 4],
@@ -64,7 +63,7 @@ impl VulkanSystem {
         surface: Arc<Surface>,
         width: u32,
         height: u32,
-        features: Features,
+        features: DeviceFeatures,
         samples: SampleCount,
     ) -> Result<Self, Error> {
         let mut device_extensions = DeviceExtensions {
@@ -80,9 +79,9 @@ impl VulkanSystem {
             physical_device,
             DeviceCreateInfo {
                 enabled_extensions: device_extensions,
-                enabled_features: Features {
+                enabled_features: DeviceFeatures {
                     dynamic_rendering: true,
-                    ..Features::empty()
+                    ..DeviceFeatures::empty()
                 } | features,
                 queue_create_infos: vec![QueueCreateInfo {
                     queue_family_index,
@@ -111,14 +110,14 @@ impl VulkanSystem {
             image_system: Arc::new(ImageSystem::new(StandardMemoryAllocator::new_default(
                 Arc::clone(&device),
             ))?),
-            cmd_allocator: StandardCommandBufferAllocator::new(
+            cmd_allocator: Arc::new(StandardCommandBufferAllocator::new(
                 Arc::clone(&device),
                 StandardCommandBufferAllocatorCreateInfo {
                     primary_buffer_count: 32,
                     secondary_buffer_count: 32,
                     ..StandardCommandBufferAllocatorCreateInfo::default()
                 },
-            ),
+            )),
             queue: queues.next().expect("Promised queue is not present"),
             recreate_swapchain: false,
             swapchain_is_new: false,
@@ -168,9 +167,9 @@ impl VulkanSystem {
         Ok(())
     }
 
-    fn update_write_descriptor_sets<T, A: CommandBufferAllocator>(
+    fn update_write_descriptor_sets<T>(
         &self,
-        cmds: &mut AutoCommandBufferBuilder<T, A>,
+        cmds: &mut AutoCommandBufferBuilder<T>,
     ) -> Result<(), Error> {
         self.write_descriptors
             .update(cmds, WindowSize::from(self))?;
@@ -290,7 +289,7 @@ impl VulkanSystem {
         }
 
         let mut primary = AutoCommandBufferBuilder::primary(
-            &self.cmd_allocator,
+            Arc::clone(&self.cmd_allocator) as Arc<_>,
             self.queue.queue_family_index(),
             CommandBufferUsage::OneTimeSubmit,
         )
@@ -611,7 +610,7 @@ pub struct RenderContext<'a> {
     queue_family_index: u32,
     renderpass: &'a Arc<RenderPass>,
     swapchain_framebuffer: &'a Arc<Framebuffer>,
-    command_buffer_allocator: &'a StandardCommandBufferAllocator,
+    command_buffer_allocator: &'a Arc<StandardCommandBufferAllocator>,
     write_descriptor_set_manager: &'a WriteDescriptorSetManager,
     image_system: &'a ImageSystem,
 }
@@ -621,13 +620,13 @@ impl<'a> RenderContext<'a> {
         &self,
     ) -> Result<AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, Error> {
         AutoCommandBufferBuilder::secondary(
-            self.command_buffer_allocator,
+            Arc::clone(self.command_buffer_allocator) as Arc<_>,
             self.queue_family_index,
             CommandBufferUsage::OneTimeSubmit,
             CommandBufferInheritanceInfo {
                 render_pass: None,
                 occlusion_query: None,
-                query_statistics_flags: Default::default(),
+                pipeline_statistics: Default::default(),
                 ..CommandBufferInheritanceInfo::default()
             },
         )
@@ -638,7 +637,7 @@ impl<'a> RenderContext<'a> {
         &self,
     ) -> Result<AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, Error> {
         let mut secondary = AutoCommandBufferBuilder::secondary(
-            self.command_buffer_allocator,
+            Arc::clone(self.command_buffer_allocator) as Arc<_>,
             self.queue_family_index,
             CommandBufferUsage::OneTimeSubmit,
             CommandBufferInheritanceInfo {
@@ -649,7 +648,7 @@ impl<'a> RenderContext<'a> {
                     },
                 )),
                 occlusion_query: None,
-                query_statistics_flags: Default::default(),
+                pipeline_statistics: Default::default(),
                 ..CommandBufferInheritanceInfo::default()
             },
         )
@@ -673,13 +672,9 @@ impl<'a> RenderContext<'a> {
     }
 
     #[inline]
-    pub fn update_write_descriptor_set<
-        T,
-        A: CommandBufferAllocator,
-        W: WriteDescriptorSetOrigin,
-    >(
+    pub fn update_write_descriptor_set<T, W: WriteDescriptorSetOrigin>(
         &self,
-        cmds: &mut AutoCommandBufferBuilder<T, A>,
+        cmds: &mut AutoCommandBufferBuilder<T>,
         origin: impl Borrow<W>,
     ) -> Result<Option<&WriteDescriptorSet>, Error> {
         self.write_descriptor_set_manager.update(cmds, origin)

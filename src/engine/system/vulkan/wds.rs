@@ -3,11 +3,10 @@ use crate::engine::system::vulkan::Error;
 use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::sync::Arc;
-use vulkano::command_buffer::allocator::CommandBufferAllocator;
 use vulkano::command_buffer::AutoCommandBufferBuilder;
 use vulkano::descriptor_set::allocator::StandardDescriptorSetAllocator;
 use vulkano::descriptor_set::layout::DescriptorSetLayout;
-use vulkano::descriptor_set::{PersistentDescriptorSet, WriteDescriptorSet};
+use vulkano::descriptor_set::{DescriptorSet, WriteDescriptorSet};
 use vulkano::memory::allocator::StandardMemoryAllocator;
 use vulkano::{Validated, VulkanError};
 
@@ -53,9 +52,9 @@ impl WriteDescriptorSetManager {
     }
 
     #[inline]
-    pub fn update<T, A: CommandBufferAllocator, W: WriteDescriptorSetOrigin>(
+    pub fn update<T, W: WriteDescriptorSetOrigin>(
         &self,
-        cmds: &mut AutoCommandBufferBuilder<T, A>,
+        cmds: &mut AutoCommandBufferBuilder<T>,
         origin: impl Borrow<W>,
     ) -> Result<Option<&WriteDescriptorSet>, Error> {
         let origin = origin.borrow();
@@ -69,10 +68,10 @@ impl WriteDescriptorSetManager {
     pub fn create_persistent_descriptor_set(
         &self,
         layout: &Arc<DescriptorSetLayout>,
-    ) -> Result<Arc<PersistentDescriptorSet>, Validated<VulkanError>> {
+    ) -> Result<Arc<DescriptorSet>, Validated<VulkanError>> {
         let descriptor_writes = self.get_required_descriptors(&layout);
-        PersistentDescriptorSet::new(
-            &self.desc_allocator,
+        DescriptorSet::new(
+            Arc::clone(&self.desc_allocator) as Arc<_>,
             Arc::clone(layout),
             descriptor_writes,
             [],

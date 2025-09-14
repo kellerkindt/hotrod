@@ -1,13 +1,14 @@
 use crate::engine::system::vulkan::buffers::BasicBuffersManager;
 use crate::engine::system::vulkan::system::{GraphicsPipelineRenderPassInfo, VulkanSystem};
+use crate::engine::system::vulkan::utils::Draw;
 use crate::engine::system::vulkan::wds::WriteDescriptorSetManager;
 use crate::engine::system::vulkan::{DrawError, PipelineCreateError, ShaderLoadError};
 use crate::shader_from_path;
 use bytemuck::{Pod, Zeroable};
 use std::sync::Arc;
 use vulkano::command_buffer::AutoCommandBufferBuilder;
-use vulkano::descriptor_set::PersistentDescriptorSet;
-use vulkano::device::{Device, Features};
+use vulkano::descriptor_set::DescriptorSet;
+use vulkano::device::{Device, DeviceFeatures};
 use vulkano::pipeline::cache::PipelineCache;
 use vulkano::pipeline::graphics::color_blend::{
     AttachmentBlend, ColorBlendAttachmentState, ColorBlendState,
@@ -28,7 +29,7 @@ use vulkano::shader::EntryPoint;
 pub struct LinePipeline {
     pipeline: Arc<GraphicsPipeline>,
     buffers_manager: Arc<BasicBuffersManager>,
-    descriptor_set: Arc<PersistentDescriptorSet>,
+    descriptor_set: Arc<DescriptorSet>,
 }
 
 impl TryFrom<&VulkanSystem> for LinePipeline {
@@ -47,9 +48,9 @@ impl TryFrom<&VulkanSystem> for LinePipeline {
 }
 
 impl LinePipeline {
-    pub const REQUIRED_FEATURES: Features = Features {
+    pub const REQUIRED_FEATURES: DeviceFeatures = DeviceFeatures {
         dynamic_rendering: true,
-        ..Features::empty()
+        ..DeviceFeatures::empty()
     };
 
     pub fn new(
@@ -76,7 +77,7 @@ impl LinePipeline {
         let vs = Self::load_vertex_shader(Arc::clone(&device))?;
         let fs = Self::load_fragment_shader(Arc::clone(&device))?;
 
-        let vertex_input_state = Vertex2d::per_vertex().definition(&vs.info().input_interface)?;
+        let vertex_input_state = Vertex2d::per_vertex().definition(&vs)?;
 
         let stages = [
             PipelineShaderStageCreateInfo::new(vs),
@@ -165,7 +166,7 @@ impl LinePipeline {
                     0,
                     [line.color[0], line.color[1], line.color[2], line.color[3]],
                 )?
-                .draw(line.vertices.len() as u32, 1, offset, 0)?;
+                .hotrod_draw(line.vertices.len() as u32, 1, offset, 0)?;
 
             offset += line.vertices.len() as u32;
         }

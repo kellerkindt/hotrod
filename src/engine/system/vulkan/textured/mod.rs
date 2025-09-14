@@ -1,13 +1,14 @@
 use crate::engine::system::vulkan::buffers::BasicBuffersManager;
 use crate::engine::system::vulkan::system::{GraphicsPipelineRenderPassInfo, VulkanSystem};
 use crate::engine::system::vulkan::textures::{ImageSamplerMode, TextureId, TextureManager};
+use crate::engine::system::vulkan::utils::Draw;
 use crate::engine::system::vulkan::wds::WriteDescriptorSetManager;
 use crate::engine::system::vulkan::{DrawError, PipelineCreateError, ShaderLoadError};
 use crate::shader_from_path;
 use bytemuck::{Pod, Zeroable};
 use std::sync::Arc;
 use vulkano::command_buffer::AutoCommandBufferBuilder;
-use vulkano::device::{Device, Features};
+use vulkano::device::{Device, DeviceFeatures};
 use vulkano::image::Image;
 use vulkano::pipeline::cache::PipelineCache;
 use vulkano::pipeline::graphics::color_blend::{
@@ -50,9 +51,9 @@ impl TryFrom<&VulkanSystem> for TexturedPipeline {
 }
 
 impl TexturedPipeline {
-    pub const REQUIRED_FEATURES: Features = Features {
+    pub const REQUIRED_FEATURES: DeviceFeatures = DeviceFeatures {
         dynamic_rendering: true,
-        ..Features::empty()
+        ..DeviceFeatures::empty()
     };
 
     pub fn new(
@@ -79,7 +80,7 @@ impl TexturedPipeline {
         let vs = Self::load_vertex_shader(Arc::clone(&device))?;
         let fs = Self::load_fragment_shader(Arc::clone(&device))?;
 
-        let vertex_input_state = Vertex2dUv::per_vertex().definition(&vs.info().input_interface)?;
+        let vertex_input_state = Vertex2dUv::per_vertex().definition(&vs)?;
 
         let stages = [
             PipelineShaderStageCreateInfo::new(vs),
@@ -164,7 +165,7 @@ impl TexturedPipeline {
                         0,
                         Arc::clone(&textured.texture.0.descriptor),
                     )?
-                    .draw(textured.vertices.len() as u32, 1, offset, 0)?;
+                    .hotrod_draw(textured.vertices.len() as u32, 1, offset, 0)?;
             }
 
             offset += textured.vertices.len() as u32;
@@ -211,7 +212,7 @@ impl TexturedPipeline {
                         0,
                         Arc::clone(&textured.texture.0.descriptor),
                     )?
-                    .draw_indexed(index_count, 1, offset_indices, offset_vertices, 0)?;
+                    .hotrod_draw_indexed(index_count, 1, offset_indices, offset_vertices, 0)?;
             }
 
             offset_vertices += textured.vertices.len() as i32;

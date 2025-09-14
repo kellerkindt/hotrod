@@ -16,10 +16,10 @@ name = "main"
 image = "0.24.7"
 
 [dependencies]
-sdl2 = { version = "0.36.0", features = ["gfx", "raw-window-handle", "ttf"] }
+sdl2 = { version = "0.38.0", features = ["gfx", "raw-window-handle", "ttf"], default-features = false }
 cgmath = "0.18.0"
-vulkano = { version = "0.34.1" }
-vulkano-shaders = { version = "0.34.0" }
+vulkano = { version = "0.35.2" }
+vulkano-shaders = { version = "0.35.0" }
 bytemuck = "1.13.0"
 thiserror = { version = "1.0.40", features = [] }
 nohash-hasher = "0.2.0"

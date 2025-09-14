@@ -4,8 +4,11 @@ use crate::engine::system::vulkan::system::{GraphicsPipelineRenderPassInfo, Vulk
 use crate::engine::system::vulkan::textures::{
     ImageSamplerMode, ImageSystem, TextureId, TextureManager,
 };
+use crate::engine::system::vulkan::utils::Draw;
 use crate::engine::system::vulkan::{DrawError, PipelineCreateError, ShaderLoadError, UploadError};
 use crate::shader_from_path;
+use crate::ui::egui::epaint::{ImageDelta, Primitive};
+use crate::ui::egui::{TextureFilter, TextureWrapMode};
 use bytemuck::{Pod, Zeroable};
 use egui::{
     ClippedPrimitive, Color32, ImageData, Rect, TextureId as EguiTextureId, TextureOptions,
@@ -38,9 +41,6 @@ use vulkano::pipeline::{
 };
 use vulkano::shader::EntryPoint;
 use vulkano::{Validated, VulkanError};
-
-use crate::ui::egui::epaint::{ImageDelta, Primitive};
-use crate::ui::egui::{TextureFilter, TextureWrapMode};
 
 type TextureSamplers = HashMap<TextureOptions, Arc<Sampler>>;
 
@@ -122,8 +122,7 @@ impl EguiPipeline {
         let vs = Self::load_vertex_shader(Arc::clone(&device))?;
         let fs = Self::load_fragment_shader(Arc::clone(&device))?;
 
-        let vertex_input_state =
-            AdapterVertex::per_vertex().definition(&vs.info().input_interface)?;
+        let vertex_input_state = AdapterVertex::per_vertex().definition(&vs)?;
 
         let stages = [
             PipelineShaderStageCreateInfo::new(vs),
@@ -299,7 +298,7 @@ impl EguiPipeline {
                         0,
                         Arc::clone(texture.descriptor()),
                     )?
-                    .draw_indexed(
+                    .hotrod_draw_indexed(
                         (offset_index_end - offset_index) as u32,
                         1,
                         offset_index as u32,

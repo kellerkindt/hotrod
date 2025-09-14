@@ -194,7 +194,7 @@ impl<'a> FontRendererThread<'a> {
         if let Err(e) = std::thread::Builder::new()
             .name("FontRendererThread".to_string())
             .spawn(move || {
-                let ctx = Sdl2TtfContext;
+                let ctx = sdl2::ttf::init().expect("Failed to init TTF context");
                 FontRendererThread {
                     ctx: &ctx,
                     ttf: ttf.as_ref(),

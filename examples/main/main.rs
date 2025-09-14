@@ -1,26 +1,32 @@
+use hotrod::engine::builder::EngineBuilder;
 use hotrod::engine::system::canvas::buffered_layer::BufferedCanvasLayer;
 use hotrod::engine::system::vulkan::beautiful_lines::{BeautifulLine, Vertex2d};
 use hotrod::engine::system::vulkan::textured::{Textured, TexturedIndexed, Vertex2dUv};
 use hotrod::engine::system::vulkan::triangles::{Triangles, TrianglesIndexed};
 use hotrod::engine::types::world2d::{Dim, Pos};
-use hotrod::engine::Engine;
-use hotrod::logging::LevelFilter;
 use hotrod::sdl2;
 use hotrod::sdl2::event::Event;
 use hotrod::sdl2::keyboard::Keycode;
 use hotrod::sdl2::pixels::PixelFormatEnum;
-use hotrod::sdl2::ttf::{FontStyle, Hinting, Sdl2TtfContext};
+use hotrod::sdl2::ttf::{FontStyle, Hinting};
 use image::GenericImageView;
 use std::io::Cursor;
 use std::ops::{Div, Mul};
 use std::sync::Arc;
 use std::time::{Duration, Instant, UNIX_EPOCH};
+use tracing_subscriber::filter::LevelFilter;
 
 const IMAGE_DATA: &[u8] = include_bytes!(concat!("rust-logo-256x256.png"));
 
 fn main() {
-    hotrod::logging::init_logger(Some(LevelFilter::Info)).expect("Unable to init logger");
-    let mut engine = Engine::default().with_fps(144);
+    hotrod::logging::init_logger(Some(LevelFilter::INFO)).expect("Unable to init logger");
+    let mut engine = EngineBuilder::default()
+        .with_target_frame_rate(144)
+        .with_ttf_font_renderer(include_bytes!(
+            "/usr/share/fonts/truetype/noto/NotoMono-Regular.ttf"
+        ))
+        .build()
+        .expect("Failed to build the engine");
 
     let mut duration_engine = Duration::from_secs(1);
     let mut duration_loop = Duration::from_secs(1);
@@ -64,36 +70,30 @@ fn main() {
                 let mut buffers = Vec::default();
 
                 if texture.is_none() {
-                    let mut commands = context.inner.create_preparation_buffer_builder().unwrap();
-
                     let image = image::io::Reader::new(Cursor::new(IMAGE_DATA))
                         .with_guessed_format()
                         .unwrap()
                         .decode()
                         .unwrap();
 
-                    texture = Some(
-                        context
-                            .pipelines
-                            .texture
-                            .create_texture(
-                                &mut commands,
-                                image
-                                    .pixels()
-                                    .flat_map(|(_x, _y, rgba)| rgba.0)
-                                    .collect::<Vec<u8>>(),
-                                image.width(),
-                                image.height(),
-                            )
-                            .unwrap(),
-                    );
+                    let image = context
+                        .inner
+                        .image_system()
+                        .create_image_and_enqueue_upload(
+                            image
+                                .pixels()
+                                .flat_map(|(_x, _y, rgba)| rgba.0)
+                                .collect::<Vec<u8>>(),
+                            image.width(),
+                            image.height(),
+                        )
+                        .expect("Failed to upload image");
 
-                    buffers.push(commands.build().unwrap());
+                    texture = Some(context.pipelines.texture.prepare_texture(image).unwrap());
                 }
 
                 if ttf.is_none() {
-                    let mut commands = context.inner.create_preparation_buffer_builder().unwrap();
-                    let ttf_ctxt = Sdl2TtfContext;
+                    let ttf_ctxt = sdl2::ttf::init().expect("Failed to init TTF context");
 
                     //
                     let mut font = ttf_ctxt
@@ -119,14 +119,15 @@ fn main() {
 
                     let data = surface.without_lock().unwrap().to_vec();
 
-                    let texture = context
-                        .pipelines
-                        .texture
-                        .create_texture(&mut commands, data, surface.width(), surface.height())
-                        .unwrap();
+                    let image = context
+                        .inner
+                        .image_system()
+                        .create_image_and_enqueue_upload(data, surface.width(), surface.height())
+                        .expect("Failed to upload image");
+
+                    let texture = context.pipelines.texture.prepare_texture(image).unwrap();
 
                     ttf = Some((texture, surface.height() as f32 / surface.width() as f32));
-                    buffers.push(commands.build().unwrap());
                 }
 
                 let mut commands = context.inner.create_render_buffer_builder().unwrap();

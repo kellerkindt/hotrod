@@ -6,7 +6,7 @@ use vulkano::descriptor_set::allocator::{
     StandardDescriptorSetAllocator, StandardDescriptorSetAllocatorCreateInfo,
 };
 use vulkano::descriptor_set::layout::DescriptorSetLayout;
-use vulkano::descriptor_set::{PersistentDescriptorSet, WriteDescriptorSet};
+use vulkano::descriptor_set::{DescriptorSet, WriteDescriptorSet};
 use vulkano::device::Device;
 use vulkano::image::sampler::Sampler;
 use vulkano::image::view::ImageView;
@@ -17,7 +17,7 @@ use vulkano::{Validated, VulkanError};
 pub struct TextureManager<T, const BINDING: u32> {
     sampler: Arc<Sampler>,
     desc_layout: Arc<DescriptorSetLayout>,
-    desc_allocator: StandardDescriptorSetAllocator,
+    desc_allocator: Arc<StandardDescriptorSetAllocator>,
     origin_marker: Arc<()>,
     _t: PhantomData<T>,
 }
@@ -32,17 +32,17 @@ impl<T, const BINDING: u32> TextureManager<T, BINDING> {
         Ok(Self::new(
             mode.create_texture_sampler(Arc::clone(&device))?,
             Arc::clone(&pipeline.layout().set_layouts()[0]),
-            StandardDescriptorSetAllocator::new(
+            Arc::new(StandardDescriptorSetAllocator::new(
                 device,
                 StandardDescriptorSetAllocatorCreateInfo::default(),
-            ),
+            )),
         ))
     }
 
     pub fn new(
         sampler: Arc<Sampler>,
         desc_layout: Arc<DescriptorSetLayout>,
-        desc_allocator: StandardDescriptorSetAllocator,
+        desc_allocator: Arc<StandardDescriptorSetAllocator>,
     ) -> Self {
         Self {
             sampler,
@@ -86,9 +86,9 @@ impl<T, const BINDING: u32> TextureManager<T, BINDING> {
         image: Arc<Image>,
         sampler: Arc<Sampler>,
         descriptors: impl Iterator<Item = WriteDescriptorSet>,
-    ) -> Result<Arc<PersistentDescriptorSet>, Validated<VulkanError>> {
-        PersistentDescriptorSet::new(
-            &self.desc_allocator,
+    ) -> Result<Arc<DescriptorSet>, Validated<VulkanError>> {
+        DescriptorSet::new(
+            Arc::clone(&self.desc_allocator) as Arc<_>,
             Arc::clone(&self.desc_layout),
             [WriteDescriptorSet::image_view_sampler(
                 BINDING,
@@ -125,7 +125,7 @@ impl<T> TextureId<T> {
 
 impl<T> TextureId<T> {
     #[inline]
-    pub fn descriptor(&self) -> &Arc<PersistentDescriptorSet> {
+    pub fn descriptor(&self) -> &Arc<DescriptorSet> {
         &self.0.descriptor
     }
 }
@@ -140,6 +140,6 @@ impl<T> PartialEq for TextureId<T> {
 pub struct TextureInner<T> {
     pub origin: Arc<()>,
     pub _image: Arc<Image>,
-    pub descriptor: Arc<PersistentDescriptorSet>,
+    pub descriptor: Arc<DescriptorSet>,
     _t: PhantomData<T>,
 }
