@@ -107,8 +107,16 @@ impl Engine {
                 #[cfg(feature = "ttf-sdl2")]
                 ttf: sdl2::ttf::init()
                     .map_err(|e| Error::SdlError(format!("Failed to init TTF module: {e}")))?,
-                context,
                 window_icon: None,
+                game_controllers: Vec::default(),
+                game_controller_subsystem: match context.game_controller() {
+                    Ok(game_controller_subsystem) => Some(game_controller_subsystem),
+                    Err(e) => {
+                        error!("Failed to initialize GameControllerSubsystem: {e}");
+                        None
+                    }
+                },
+                context,
             }
             .maybe_with_window_icon(builder.window_icon),
             framerate_manager: FpsManager::new(builder.target_frame_rate),
@@ -170,6 +178,28 @@ impl Engine {
                     self.set_fullscreen(!self.sdl.window_maximized);
                     allow_maximize_change = false;
                 }
+                Event::JoyDeviceAdded { which, .. } => {
+                    if let Some(game_controller_subsystem) = &mut self.sdl.game_controller_subsystem
+                    {
+                        match game_controller_subsystem.open(*which) {
+                            Ok(mut controller) => {
+                                info!("Found GameController({which}): {}", controller.name());
+                                let _ = controller.set_rumble(15000, 20000, 2200);
+                                self.sdl.game_controllers.push(controller);
+                            }
+                            Err(e) => {
+                                error!("Failed to ope GameController({which}): {e:?}")
+                            }
+                        }
+                    }
+                }
+                Event::JoyDeviceRemoved { .. } => self.sdl.game_controllers.retain(|gc| {
+                    let attached = gc.attached();
+                    if !attached {
+                        warn!("GameController({}) detached", gc.name());
+                    }
+                    attached
+                }),
                 _ => {}
             }
         }

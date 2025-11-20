@@ -1,8 +1,9 @@
 use crate::support::image::RawRgbaImage;
+use sdl2::controller::GameController;
 use sdl2::pixels::PixelFormatEnum;
 use sdl2::surface::Surface;
 use sdl2::video::Window;
-use sdl2::{EventPump, Sdl, VideoSubsystem};
+use sdl2::{EventPump, GameControllerSubsystem, Sdl, VideoSubsystem};
 
 pub struct SdlParts {
     pub video_subsystem: VideoSubsystem,
@@ -13,6 +14,8 @@ pub struct SdlParts {
     pub ttf: sdl2::ttf::Sdl2TtfContext,
     pub context: Sdl,
     pub window_icon: Option<Surface<'static>>,
+    pub game_controllers: Vec<GameController>,
+    pub game_controller_subsystem: Option<GameControllerSubsystem>,
 }
 
 impl SdlParts {
