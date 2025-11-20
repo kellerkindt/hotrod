@@ -17,7 +17,7 @@ required-features = ["ui-egui", "ttf-font-renderer"]
 image = "0.25"
 
 [dependencies]
-sdl2 = { version = "0.38.0", features = ["gfx", "raw-window-handle", "ttf"], default-features = false }
+sdl2 = { version = "0.38.0", features = ["gfx", "raw-window-handle", "ttf", "static-link", "use-pkgconfig"], default-features = false }
 cgmath = "0.18.0"
 vulkano = { version = "0.35.2" }
 vulkano-shaders = { version = "0.35.0" }
