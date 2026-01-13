@@ -58,6 +58,8 @@ impl TryFrom<&VulkanSystem> for World2dTerrainPipeline {
 }
 
 impl World2dTerrainPipeline {
+    const QUAD_INDICES: [u32; 6] = [0, 1, 2, 2, 3, 0];
+
     pub fn new(
         device: Arc<Device>,
         render_pass_info: GraphicsPipelineRenderPassInfo,
@@ -68,7 +70,7 @@ impl World2dTerrainPipeline {
         let pipeline = Self::create_pipeline(Arc::clone(&device), render_pass_info, cache)?;
         Ok(Self {
             quad_index_buffer: buffers_manager
-                .create_index_buffer([0, 1, 2, 2, 3, 0])?
+                .create_index_buffer(Self::QUAD_INDICES)?
                 .into(),
             quad_vertex_buffer: buffers_manager
                 .create_vertex_buffer(vec![
@@ -188,9 +190,9 @@ impl World2dTerrainPipeline {
     {
         let mut prepared = prepared.peekable();
 
-        // Call draw_with in batches so that for each batch the TextureId is the same
+        // Call draw_nested in batches so that for each batch the TextureId is the same
         while let Some(texture) = prepared.peek().map(|p| p.texture_id.clone()) {
-            self.draw_with(
+            self.draw_ntested(
                 builder,
                 &texture,
                 (&mut prepared)
@@ -207,21 +209,21 @@ impl World2dTerrainPipeline {
         &self,
         builder: &mut AutoCommandBufferBuilder<P>,
         texture: &TextureId<Self>,
-        tiles: I,
+        instances: I,
     ) -> Result<(), DrawError>
     where
         I: IntoIterator<Item = InstanceData>,
         I::IntoIter: ExactSizeIterator,
     {
-        let vertex_buffer = self.buffers_manager.create_vertex_buffer(tiles)?;
-        self.draw_with(builder, texture, Some(vertex_buffer).into_iter())
+        let instances = self.buffers_manager.create_vertex_buffer(instances)?;
+        self.draw_ntested(builder, texture, Some(instances).into_iter())
     }
 
-    fn draw_with<P, I>(
+    fn draw_ntested<P, I>(
         &self,
         builder: &mut AutoCommandBufferBuilder<P>,
         texture: &TextureId<Self>,
-        vertex_buffers: I,
+        nested_instances: I,
     ) -> Result<(), DrawError>
     where
         I: Iterator<Item = Subbuffer<[InstanceData]>>,
@@ -237,17 +239,17 @@ impl World2dTerrainPipeline {
                 )?
                 .bind_index_buffer(self.quad_index_buffer.clone())?;
 
-            for vertex_buffer in vertex_buffers {
-                let instance_count = vertex_buffer.len() as u32;
+            for instances in nested_instances {
+                let instance_count = instances.len() as u32;
                 builder
                     .bind_vertex_buffers(
                         0,
                         [
                             self.quad_vertex_buffer.as_bytes().clone(),
-                            vertex_buffer.into_bytes(),
+                            instances.into_bytes(),
                         ],
                     )?
-                    .hotrod_draw_indexed(6, instance_count, 0, 0, 0)?;
+                    .hotrod_draw_indexed(Self::QUAD_INDICES.len() as _, instance_count, 0, 0, 0)?;
             }
 
             Ok(())
