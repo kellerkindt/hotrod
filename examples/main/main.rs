@@ -1,9 +1,14 @@
+use egui::Context;
 use hotrod::engine::builder::EngineBuilder;
 use hotrod::engine::system::canvas::buffered_layer::BufferedCanvasLayer;
 use hotrod::engine::system::vulkan::beautiful_lines::{BeautifulLine, Vertex2d};
-use hotrod::engine::system::vulkan::textured::{Textured, TexturedIndexed, Vertex2dUv};
+use hotrod::engine::system::vulkan::textured::{
+    Textured, TexturedIndexed, TexturedPipeline, Vertex2dUv,
+};
+use hotrod::engine::system::vulkan::textures::TextureId;
 use hotrod::engine::system::vulkan::triangles::{Triangles, TrianglesIndexed};
 use hotrod::engine::types::world2d::{Dim, Pos};
+use hotrod::engine::RenderContext;
 use hotrod::sdl2;
 use hotrod::sdl2::event::Event;
 use hotrod::sdl2::keyboard::Keycode;
@@ -14,120 +19,76 @@ use std::io::Cursor;
 use std::ops::{Div, Mul};
 use std::sync::Arc;
 use std::time::{Duration, Instant, UNIX_EPOCH};
-use tracing_subscriber::filter::LevelFilter;
+use vulkano::image::SampleCount;
 
 const IMAGE_DATA: &[u8] = include_bytes!(concat!("rust-logo-256x256.png"));
 
 fn main() {
-    hotrod::logging::init_logger(Some(LevelFilter::INFO)).expect("Unable to init logger");
-    let mut engine = EngineBuilder::default()
-        .with_target_frame_rate(144)
-        .with_ttf_font_renderer(include_bytes!(
+    // #############################################################################################
+    // #                                                                                           #
+    // #    Initialization                                                                         #
+    // #                                                                                           #
+    // #############################################################################################
+    hotrod::hint::video::prefer_wayland();
+    hotrod::logging::init_logger_with_customization(|builder| {
+        builder
+            .with_env_filter(format!(
+                "{}=trace",
+                env!("CARGO_PKG_NAME").replace('-', "_")
+            ))
+            .with_max_level(tracing::metadata::LevelFilter::INFO)
+    })
+    .expect("Unable to init logger");
+
+    let mut engine = {
+        let engine = EngineBuilder::default()
+            .with_window_title("Silly Example - Forged by the HotRod Engine")
+            .with_target_frame_rate(144)
+            .with_fullscreen(!cfg!(debug_assertions))
+            .with_msaa(SampleCount::Sample1);
+
+        // ttf example: use the FontRenderer
+        #[cfg(feature = "ttf-font-renderer")]
+        let engine = engine.with_ttf_font_renderer(include_bytes!(
             "/usr/share/fonts/truetype/noto/NotoMono-Regular.ttf"
-        ))
-        .build()
-        .expect("Failed to build the engine");
+        ));
+
+        engine.build().expect("Failed to build the engine")
+    };
 
     let mut duration_engine = Duration::from_secs(1);
     let mut duration_loop = Duration::from_secs(1);
     let mut texture = None;
     let mut ttf = None;
 
+    // #############################################################################################
+    // #                                                                                           #
+    // #    Game Loop                                                                              #
+    // #                                                                                           #
+    // #############################################################################################
     loop {
         let loop_start = Instant::now();
         let response = engine.update(|mut ctx| {
-            let abort = ctx.events.iter().any(|e| match e {
-                Event::Quit { .. } => true,
-                Event::KeyDown { keycode, .. } => {
-                    matches!(keycode, Some(Keycode::Escape))
-                }
-                _ => false,
-            });
+            // handle all new inputs
+            let quit = ctx.events.drain(..).any(|e| wants_to_quit(e));
 
+            // update the UI
             ctx.update_egui(|ctx| {
-                use hotrod::ui::egui::Window;
-                Window::new("HotRod - Engine Time")
-                    .resizable(true)
-                    .show(ctx, |ui| {
-                        ui.label(format!("{duration_engine:?}"));
-                        ui.label(format!("~{:.2}fps", (1.0 / duration_engine.as_secs_f32())));
-                        if ui.button("CLICK ME").clicked() {
-                            eprintln!("I WAS CLICKED!");
-                        }
-                    });
-                Window::new("HotRod - Present Time")
-                    .resizable(true)
-                    .show(ctx, |ui| {
-                        ui.label(format!("{duration_loop:?}"));
-                        ui.label(format!("~{:.2}fps", (1.0 / duration_loop.as_secs_f32())));
-                        if ui.button("CLICK ME").clicked() {
-                            eprintln!("I WAS CLICKED!");
-                        }
-                    });
+                show_stats_windows(ctx, duration_engine, duration_loop);
             });
 
+            // render custom stuff
             ctx.render(|context| {
                 let mut buffers = Vec::default();
 
                 if texture.is_none() {
-                    let image = image::ImageReader::new(Cursor::new(IMAGE_DATA))
-                        .with_guessed_format()
-                        .unwrap()
-                        .decode()
-                        .unwrap();
-
-                    let image = context
-                        .inner
-                        .image_system()
-                        .create_image_and_enqueue_upload(
-                            image
-                                .pixels()
-                                .flat_map(|(_x, _y, rgba)| rgba.0)
-                                .collect::<Vec<u8>>(),
-                            image.width(),
-                            image.height(),
-                        )
-                        .expect("Failed to upload image");
-
-                    texture = Some(context.pipelines.texture.prepare_texture(image).unwrap());
+                    texture = Some(load_image_texture(&context));
                 }
 
+                // ttf example: handle all the font rendering yourself
+                #[cfg(feature = "ttf-font-renderer")]
                 if ttf.is_none() {
-                    let ttf_ctxt = sdl2::ttf::init().expect("Failed to init TTF context");
-
-                    //
-                    let mut font = ttf_ctxt
-                        .load_font("/usr/share/fonts/truetype/noto/NotoMono-Regular.ttf", 100)
-                        .unwrap();
-
-                    font.set_style(FontStyle::BOLD);
-                    font.set_hinting(Hinting::Normal);
-
-                    let surface = font
-                        .render("Bernd das Brot")
-                        .blended(sdl2::pixels::Color::GREEN)
-                        .unwrap();
-
-                    // dbg!(surface.pixel_format());
-                    dbg!(surface.pixel_format_enum());
-                    dbg!(surface.alpha_mod());
-
-                    let surface = surface.convert_format(PixelFormatEnum::RGBA32).unwrap();
-
-                    dbg!(surface.pixel_format_enum());
-                    dbg!(surface.alpha_mod());
-
-                    let data = surface.without_lock().unwrap().to_vec();
-
-                    let image = context
-                        .inner
-                        .image_system()
-                        .create_image_and_enqueue_upload(data, surface.width(), surface.height())
-                        .expect("Failed to upload image");
-
-                    let texture = context.pipelines.texture.prepare_texture(image).unwrap();
-
-                    ttf = Some((texture, surface.height() as f32 / surface.width() as f32));
+                    ttf = Some(load_ttf(&context));
                 }
 
                 let mut commands = context.inner.create_render_buffer_builder().unwrap();
@@ -164,6 +125,7 @@ fn main() {
                                     .collect(),
                                 width: 1.0, // ((time / 666.0).sin().mul(3.0) + 4.0),
                             },
+                            // can you spot it in the final image?
                             BeautifulLine {
                                 vertices: vec![
                                     Vertex2d {
@@ -207,6 +169,7 @@ fn main() {
                     )
                     .unwrap();
 
+                // use the BufferedCanvasLayer as for easier drawing if 'primitives'
                 let mut layer = BufferedCanvasLayer::default();
                 layer.draw_line([10.0, 10.0], [100.0, 100.0]);
                 layer.set_draw_color([1.0, 0.0, 0.0, 1.0]);
@@ -229,6 +192,8 @@ fn main() {
                     );
                 }
 
+                // ttf example: handle all the font rendering yourself
+                #[cfg(feature = "ttf-font-renderer")]
                 if let Some((ttf, ratio)) = &ttf {
                     let width = 500.0;
                     layer.draw_textured_rect(
@@ -238,6 +203,7 @@ fn main() {
                     );
                 }
 
+                // ttf example: use the FontRenderer
                 #[cfg(feature = "ttf-font-renderer")]
                 {
                     let prepared = context.font_renderer.prepare_render(
@@ -258,6 +224,7 @@ fn main() {
 
                 buffers.push(layer.flush(context.inner, context.pipelines));
 
+                // draw some funny pictures without the BufferedCanvasLayer
                 if let Some(texture) = &texture {
                     context
                         .pipelines
@@ -400,7 +367,7 @@ fn main() {
                 buffers.push(commands.build().unwrap());
                 buffers
             })
-            .map(|_| !abort)
+            .map(|_| !quit)
         });
 
         match response.data {
@@ -418,17 +385,96 @@ fn main() {
         engine.delay();
         duration_loop = loop_start.elapsed();
     }
+}
 
-    // Engine::default()
-    //     .with_egui_context_callback(|ctx| {
-    //         use hotrod::ui::egui::Window;
-    //         Window::new("HotRod - Testing")
-    //             .resizable(true)
-    //             .show(ctx, |ui| {
-    //                 if ui.button("CLICK ME").clicked() {
-    //                     eprintln!("I WAS CLICKED!");
-    //                 }
-    //             });
-    //     })
-    //     .run();
+fn load_ttf(context: &RenderContext) -> (TextureId<TexturedPipeline>, f32) {
+    let ttf_ctxt = sdl2::ttf::init().expect("Failed to init TTF context");
+
+    let mut font = ttf_ctxt
+        .load_font("/usr/share/fonts/truetype/noto/NotoMono-Regular.ttf", 100)
+        .unwrap();
+
+    font.set_style(FontStyle::BOLD);
+    font.set_hinting(Hinting::Normal);
+
+    let surface = font
+        .render("Bernd das Brot")
+        .blended(sdl2::pixels::Color::GREEN)
+        .unwrap();
+
+    // dbg!(surface.pixel_format());
+    dbg!(surface.pixel_format_enum());
+    dbg!(surface.alpha_mod());
+
+    let surface = surface.convert_format(PixelFormatEnum::RGBA32).unwrap();
+
+    dbg!(surface.pixel_format_enum());
+    dbg!(surface.alpha_mod());
+
+    let data = surface.without_lock().unwrap().to_vec();
+
+    let image = context
+        .inner
+        .image_system()
+        .create_image_and_enqueue_upload(data, surface.width(), surface.height())
+        .expect("Failed to upload image");
+
+    let texture = context.pipelines.texture.prepare_texture(image).unwrap();
+
+    (texture, surface.height() as f32 / surface.width() as f32)
+}
+
+fn load_image_texture(context: &RenderContext) -> TextureId<TexturedPipeline> {
+    let image = image::ImageReader::new(Cursor::new(IMAGE_DATA))
+        .with_guessed_format()
+        .unwrap()
+        .decode()
+        .unwrap();
+
+    let image = context
+        .inner
+        .image_system()
+        .create_image_and_enqueue_upload(
+            image
+                .pixels()
+                .flat_map(|(_x, _y, rgba)| rgba.0)
+                .collect::<Vec<u8>>(),
+            image.width(),
+            image.height(),
+        )
+        .expect("Failed to upload image");
+
+    context.pipelines.texture.prepare_texture(image).unwrap()
+}
+
+fn wants_to_quit(e: Event) -> bool {
+    match e {
+        Event::Quit { .. } => true,
+        Event::KeyDown { keycode, .. } => {
+            matches!(keycode, Some(Keycode::Escape))
+        }
+        _ => false,
+    }
+}
+
+fn show_stats_windows(ctx: &Context, duration_engine: Duration, duration_loop: Duration) {
+    use hotrod::ui::egui::Window;
+    Window::new("HotRod - Engine Time")
+        .resizable(true)
+        .show(ctx, |ui| {
+            ui.label(format!("{duration_engine:?}"));
+            ui.label(format!("~{:.2}fps", (1.0 / duration_engine.as_secs_f32())));
+            if ui.button("CLICK ME").clicked() {
+                eprintln!("I WAS CLICKED!");
+            }
+        });
+    Window::new("HotRod - Present Time")
+        .resizable(true)
+        .show(ctx, |ui| {
+            ui.label(format!("{duration_loop:?}"));
+            ui.label(format!("~{:.2}fps", (1.0 / duration_loop.as_secs_f32())));
+            if ui.button("CLICK ME").clicked() {
+                eprintln!("I WAS CLICKED!");
+            }
+        });
 }
