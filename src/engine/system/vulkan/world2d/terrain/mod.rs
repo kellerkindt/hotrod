@@ -188,17 +188,25 @@ impl World2dTerrainPipeline {
     where
         I: Iterator<Item = &'a PreparedDraw> + 'a,
     {
-        let mut prepared = prepared.peekable();
+        let mut prepared_by_texture =
+            Vec::<(TextureId<Self>, Vec<Subbuffer<[InstanceData]>>)>::new();
 
-        // Call draw_nested in batches so that for each batch the TextureId is the same
-        while let Some(texture) = prepared.peek().map(|p| p.texture_id.clone()) {
-            self.draw_ntested(
-                builder,
-                &texture,
-                (&mut prepared)
-                    .take_while(|prepared| prepared.texture_id == texture)
-                    .map(|prepared| prepared.vertex_buffer.clone()),
-            )?;
+        for prepared_draw in prepared {
+            if let Some((_, vec)) = prepared_by_texture
+                .iter_mut()
+                .find(|(t, _)| *t == prepared_draw.texture_id)
+            {
+                vec.push(prepared_draw.vertex_buffer.clone())
+            } else {
+                prepared_by_texture.push((
+                    prepared_draw.texture_id.clone(),
+                    vec![prepared_draw.vertex_buffer.clone()],
+                ));
+            }
+        }
+
+        for (texture, instances) in prepared_by_texture {
+            self.draw_nested(builder, &texture, instances.into_iter())?;
         }
 
         Ok(())
@@ -216,10 +224,10 @@ impl World2dTerrainPipeline {
         I::IntoIter: ExactSizeIterator,
     {
         let instances = self.buffers_manager.create_vertex_buffer(instances)?;
-        self.draw_ntested(builder, texture, Some(instances).into_iter())
+        self.draw_nested(builder, texture, Some(instances).into_iter())
     }
 
-    fn draw_ntested<P, I>(
+    fn draw_nested<P, I>(
         &self,
         builder: &mut AutoCommandBufferBuilder<P>,
         texture: &TextureId<Self>,

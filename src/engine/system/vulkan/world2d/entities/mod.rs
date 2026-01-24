@@ -189,17 +189,25 @@ impl World2dEntitiesPipeline {
     where
         I: Iterator<Item = &'a EntityPreparedDraw> + 'a,
     {
-        let mut prepared = prepared.peekable();
+        let mut prepared_by_texture =
+            Vec::<(TextureId<Self>, Vec<Subbuffer<[EntityInstanceData]>>)>::new();
 
-        // Call draw_nested in batches so that for each batch the TextureId is the same
-        while let Some(texture) = prepared.peek().map(|p| p.texture_id.clone()) {
-            self.draw_nested(
-                builder,
-                &texture,
-                (&mut prepared)
-                    .take_while(|prepared| prepared.texture_id == texture)
-                    .map(|prepared| prepared.vertex_buffer.clone()),
-            )?;
+        for prepared_draw in prepared {
+            if let Some((_, vec)) = prepared_by_texture
+                .iter_mut()
+                .find(|(t, _)| *t == prepared_draw.texture_id)
+            {
+                vec.push(prepared_draw.vertex_buffer.clone())
+            } else {
+                prepared_by_texture.push((
+                    prepared_draw.texture_id.clone(),
+                    vec![prepared_draw.vertex_buffer.clone()],
+                ));
+            }
+        }
+
+        for (texture, instances) in prepared_by_texture {
+            self.draw_nested(builder, &texture, instances.into_iter())?;
         }
 
         Ok(())
