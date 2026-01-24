@@ -10,7 +10,7 @@ impl XmlTextureAtlas {
         width: u32,
         height: u32,
     ) -> Result<SpriteSheet<f32>, serde_xml_rs::Error> {
-        let atlas = dbg!(serde_xml_rs::from_str::<TextureAtlas>(content)?);
+        let atlas = serde_xml_rs::from_str::<TextureAtlas>(content)?;
         let mut sprite_sheet = SpriteSheet::new(Dim::new(width, height));
         for texture in atlas.sub_textures {
             sprite_sheet.add(

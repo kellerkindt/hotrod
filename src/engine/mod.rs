@@ -356,6 +356,17 @@ pub struct RenderContext<'a, 'b> {
     pub font_renderer: &'a mut crate::engine::system::ttf::FontRenderer,
 }
 
+impl RenderContext<'_, '_> {
+    /// The time in seconds since the last render call.
+    pub fn delta_seconds(&self) -> f32 {
+        self.last_render_call
+            .map(|earlier| self.this_render_call.duration_since(earlier))
+            .map(|duration| duration.as_secs_f32())
+            .filter(|duration| *duration > 0.0)
+            .unwrap_or_default()
+    }
+}
+
 pub struct RenderResponse<T> {
     pub data: T,
     pub start: Instant,

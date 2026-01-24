@@ -3,7 +3,9 @@ use crate::engine::system::vulkan::system::{GraphicsPipelineRenderPassInfo, Vulk
 use crate::engine::system::vulkan::textures::{ImageSamplerMode, TextureId, TextureManager};
 use crate::engine::system::vulkan::utils::Draw;
 use crate::engine::system::vulkan::wds::WriteDescriptorSetManager;
-use crate::engine::system::vulkan::{DrawError, PipelineCreateError, ShaderLoadError};
+use crate::engine::system::vulkan::{
+    DrawError, PipelineCreateError, PipelineTextureLoader, ShaderLoadError,
+};
 use crate::shader_from_path;
 use bytemuck::{Pod, Zeroable};
 use std::sync::Arc;
@@ -256,8 +258,10 @@ impl World2dEntitiesPipeline {
             todo!()
         }
     }
+}
 
-    pub fn prepare_texture(
+impl PipelineTextureLoader for World2dEntitiesPipeline {
+    fn prepare_texture(
         &self,
         image: Arc<Image>,
     ) -> Result<TextureId<Self>, Validated<VulkanError>> {

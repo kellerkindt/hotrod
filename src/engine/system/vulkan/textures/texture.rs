@@ -107,7 +107,7 @@ impl<T, const BINDING: u32> TextureManager<T, BINDING> {
     }
 }
 
-pub struct TextureId<T>(pub Arc<TextureInner<T>>);
+pub struct TextureId<T: ?Sized>(pub Arc<TextureInner<T>>);
 
 impl<T> Clone for TextureId<T> {
     #[inline]
@@ -137,7 +137,7 @@ impl<T> PartialEq for TextureId<T> {
     }
 }
 
-pub struct TextureInner<T> {
+pub struct TextureInner<T: ?Sized> {
     pub origin: Arc<()>,
     pub _image: Arc<Image>,
     pub descriptor: Arc<DescriptorSet>,

@@ -17,3 +17,6 @@ pub mod ui;
 
 #[cfg(feature = "logging-initializer")]
 pub mod logging;
+
+#[cfg(feature = "image")]
+pub extern crate image;

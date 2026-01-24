@@ -1,5 +1,7 @@
+use crate::engine::system::vulkan::textures::TextureId;
+use std::sync::Arc;
 use vulkano::buffer::AllocateBufferError;
-use vulkano::image::AllocateImageError;
+use vulkano::image::{AllocateImageError, Image};
 use vulkano::pipeline::layout::IntoPipelineLayoutCreateInfoError;
 use vulkano::{Validated, ValidationError, VulkanError};
 
@@ -101,4 +103,9 @@ pub enum ShaderLoadError {
     VulkanError(#[from] Validated<VulkanError>),
     #[error("The shader '{0}' is missing the entry point (function) '{1}")]
     MissingEntryPoint(&'static str, &'static str),
+}
+
+pub trait PipelineTextureLoader {
+    fn prepare_texture(&self, image: Arc<Image>)
+        -> Result<TextureId<Self>, Validated<VulkanError>>;
 }
