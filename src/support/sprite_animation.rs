@@ -10,6 +10,7 @@ use vulkano::{Validated, VulkanError};
 pub struct SpriteAnimationLoader<'i> {
     image_system: &'i ImageSystem,
     padding: [f32; 4],
+    sprite_size: Option<(f32, f32)>,
 }
 
 impl<'i> SpriteAnimationLoader<'i> {
@@ -17,11 +18,17 @@ impl<'i> SpriteAnimationLoader<'i> {
         Self {
             image_system,
             padding: [0.0; 4],
+            sprite_size: None,
         }
     }
 
     pub fn with_padding(mut self, padding: f32) -> Self {
         self.padding = [padding; 4];
+        self
+    }
+
+    pub fn with_sprite_size(mut self, width: f32, height: f32) -> Self {
+        self.sprite_size = Some((width, height));
         self
     }
 
@@ -50,11 +57,16 @@ impl<'i> SpriteAnimationLoader<'i> {
 
         let image_width = mem_image.width() as f32;
         let image_height = mem_image.height() as f32;
-        let sprite_size = image_width.min(image_height);
-        let sprite_size_padded = (sprite_size - self.padding[1] - self.padding[3])
-            .min(sprite_size - self.padding[0] - self.padding[2]);
+        let (sprite_width, sprite_height) = self.sprite_size.unwrap_or_else(|| {
+            let size = image_width.min(image_height);
+            (size, size)
+        });
+        let sprite_size_padded_w = sprite_width - self.padding[1] - self.padding[3];
+        let sprite_size_padded_h = sprite_height - self.padding[0] - self.padding[2];
 
-        let origin = (sprite_size / 2.0) - (sprite_size_padded / 2.0);
+        let origin_x = self.padding[3];
+        let origin_y = self.padding[0];
+
         let elements =
             (mem_image.width() / mem_image.height()).max(mem_image.height() / mem_image.width());
 
@@ -68,12 +80,14 @@ impl<'i> SpriteAnimationLoader<'i> {
                 Sprite {
                     texture: texture.clone(),
                     uv0: Pos::new(
-                        (origin + (i * stride_x * sprite_size)) / image_width,
-                        (origin + (i * stride_y * sprite_size)) / image_height,
+                        (origin_x + (i * stride_x * sprite_width)) / image_width,
+                        (origin_y + (i * stride_y * sprite_height)) / image_height,
                     ),
                     uv1: Pos::new(
-                        (origin + (i * stride_x * sprite_size) + sprite_size_padded) / image_width,
-                        (origin + (i * stride_y * sprite_size) + sprite_size_padded) / image_height,
+                        (origin_x + (i * stride_x * sprite_width) + sprite_size_padded_w)
+                            / image_width,
+                        (origin_y + (i * stride_y * sprite_height) + sprite_size_padded_h)
+                            / image_height,
                     ),
                 }
             })
