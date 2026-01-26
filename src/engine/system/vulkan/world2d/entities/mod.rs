@@ -163,14 +163,14 @@ impl World2dEntitiesPipeline {
     pub fn prepare_draw<I>(
         &self,
         texture: &TextureId<Self>,
-        tiles: I,
+        instances: I,
     ) -> Result<EntityPreparedDraw, DrawError>
     where
         I: IntoIterator<Item = EntityInstanceData>,
         I::IntoIter: ExactSizeIterator,
     {
         if self.texture_manager.is_origin_of(texture) {
-            let vertex_buffer = self.buffers_manager.create_vertex_buffer(tiles)?;
+            let vertex_buffer = self.buffers_manager.create_vertex_buffer(instances)?;
             Ok(EntityPreparedDraw {
                 vertex_buffer,
                 texture_id: texture.clone(),
