@@ -49,6 +49,15 @@ impl BasicBuffersManager {
         I: IntoIterator<Item = T>,
         I::IntoIter: ExactSizeIterator,
     {
+        #[cfg(debug_assertions)]
+        let vertices = {
+            let vertices = vertices.into_iter();
+            if vertices.len() == 0 {
+                warn!("Given empty vertex iterator to create vertex buffer")
+            }
+            vertices
+        };
+
         Buffer::from_iter(
             Arc::clone(&self.memo_allocator),
             BufferCreateInfo {
