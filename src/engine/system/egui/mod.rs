@@ -51,6 +51,11 @@ impl EguiSystem {
         self.binding.set_sdl2_view_area(area);
     }
 
+    #[inline]
+    pub fn context(&self) -> &Context {
+        &self.context
+    }
+
     /// Updates the [`Context`]. This updates the state for calls to [`EguiPipeline::prepare`] and
     /// [`EguiPipeline::draw`].
     pub fn update(

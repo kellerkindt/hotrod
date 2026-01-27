@@ -1,11 +1,9 @@
+use crate::engine::system::texture::TextureLoaderExt;
+use crate::engine::system::texture::{Error as TextureLoaderError, TextureView};
 use crate::engine::system::vulkan::textures::{ImageSystem, TextureId};
-use crate::engine::system::vulkan::{PipelineTextureLoader, UploadError};
+use crate::engine::system::vulkan::PipelineTextureLoader;
 use crate::engine::types::world2d::Pos;
-use image::{DynamicImage, GenericImageView, ImageReader};
 use std::io::{BufRead, Cursor, Seek};
-use std::sync::Arc;
-use vulkano::image::Image;
-use vulkano::{Validated, VulkanError};
 
 pub struct SpriteAnimationLoader<'i> {
     image_system: &'i ImageSystem,
@@ -32,28 +30,33 @@ impl<'i> SpriteAnimationLoader<'i> {
         self
     }
 
-    pub fn load_sprites<'a, P: PipelineTextureLoader, C: 'a>(
+    pub fn load_sprites<'a, P: PipelineTextureLoader + 'static, C: 'a>(
         &self,
         loader: &P,
         image: C,
-    ) -> Result<Vec<Sprite<P>>, Error>
+    ) -> Result<Vec<Sprite<P>>, TextureLoaderError>
     where
         Cursor<C>: 'a + BufRead + Seek,
     {
-        let image = Cursor::new(image);
-        let mem_image = self.read_image(image)?;
-        let gpu_image = self.upload_image(
-            mem_image
-                .pixels()
-                .flat_map(|(_x, _y, rgba)| rgba.0)
-                .collect::<Vec<u8>>(),
-            mem_image.width(),
-            mem_image.height(),
-        )?;
+        let mut texture = self
+            .image_system
+            .load_texture_from_raw_image(Cursor::new(image))?;
 
-        let texture = loader
-            .prepare_texture(gpu_image)
-            .map_err(Error::VulkanError)?;
+        texture
+            .load_and_register_for(loader)
+            .map_err(TextureLoaderError::VulkanError)?;
+
+        Ok(self
+            .load_sprites_from_texture::<P>(&texture.finalize())
+            .unwrap())
+    }
+
+    pub fn load_sprites_from_texture<P: PipelineTextureLoader + 'static>(
+        &self,
+        view: &TextureView,
+    ) -> Option<Vec<Sprite<P>>> {
+        let texture_id = view.texture().get_texture_id::<P>()?;
+        let mem_image = view.texture().memory_image();
 
         let image_width = mem_image.width() as f32;
         let image_height = mem_image.height() as f32;
@@ -73,57 +76,39 @@ impl<'i> SpriteAnimationLoader<'i> {
         let stride_x = (mem_image.width() / mem_image.height()).min(1) as f32;
         let stride_y = (mem_image.height() / mem_image.width()).min(1) as f32;
 
-        Ok((0..elements)
-            .map(|i| {
-                let i = i as f32;
+        Some(
+            (0..elements)
+                .map(|i| {
+                    let i = i as f32;
 
-                Sprite {
-                    texture: texture.clone(),
-                    uv0: Pos::new(
-                        (origin_x + (i * stride_x * sprite_width)) / image_width,
-                        (origin_y + (i * stride_y * sprite_height)) / image_height,
-                    ),
-                    uv1: Pos::new(
-                        (origin_x + (i * stride_x * sprite_width) + sprite_size_padded_w)
-                            / image_width,
-                        (origin_y + (i * stride_y * sprite_height) + sprite_size_padded_h)
-                            / image_height,
-                    ),
-                }
-            })
-            .collect::<Vec<_>>())
+                    let subview = view.subview(
+                        [
+                            (origin_x + (i * stride_x * sprite_width)) / image_width,
+                            (origin_y + (i * stride_y * sprite_height)) / image_height,
+                        ],
+                        [
+                            (origin_x + (i * stride_x * sprite_width) + sprite_size_padded_w)
+                                / image_width,
+                            (origin_y + (i * stride_y * sprite_height) + sprite_size_padded_h)
+                                / image_height,
+                        ],
+                    );
+
+                    Sprite {
+                        texture: texture_id.clone(),
+                        uv0: subview.uv0_or_default().into(),
+                        uv1: subview.uv1_or_default().into(),
+                        view: subview,
+                    }
+                })
+                .collect::<Vec<_>>(),
+        )
     }
-
-    fn read_image<'a, R: 'a + BufRead + Seek>(&self, bin: R) -> Result<DynamicImage, Error> {
-        Ok(ImageReader::new(bin)
-            .with_guessed_format()
-            .map_err(Error::UnableToLoad)?
-            .decode()
-            .map_err(Error::UnableToDecode)?)
-    }
-
-    fn upload_image(&self, rgba: Vec<u8>, width: u32, height: u32) -> Result<Arc<Image>, Error> {
-        Ok(self
-            .image_system
-            .create_image_and_enqueue_upload(rgba, width, height)
-            .map_err(Error::FailedToUpload)?)
-    }
-}
-
-#[derive(thiserror::Error, Debug)]
-pub enum Error {
-    #[error("Unable to load the image: {0}")]
-    UnableToLoad(std::io::Error),
-    #[error("Unable to decode the image: {0}")]
-    UnableToDecode(image::ImageError),
-    #[error("Unable to upload the image: {0}")]
-    FailedToUpload(UploadError),
-    #[error("Vulkan error: {0}")]
-    VulkanError(Validated<VulkanError>),
 }
 
 pub struct Sprite<P> {
     pub texture: TextureId<P>,
+    pub view: TextureView,
     pub uv0: Pos<f32>,
     pub uv1: Pos<f32>,
 }

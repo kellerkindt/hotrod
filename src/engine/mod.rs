@@ -316,6 +316,8 @@ impl<'a> BeforeRenderContext<'a> {
                     height: self.height,
                     #[cfg(feature = "ttf-font-renderer")]
                     font_renderer: &mut self.engine.font_renderer,
+                    #[cfg(feature = "ui-egui")]
+                    egui_system: &mut self.engine.egui_system,
                     last_render_call: core::mem::replace(
                         &mut self.engine.last_render_call,
                         Some(this_render_call),
@@ -354,6 +356,8 @@ pub struct RenderContext<'a, 'b> {
     pub this_render_call: Instant,
     #[cfg(feature = "ttf-font-renderer")]
     pub font_renderer: &'a mut crate::engine::system::ttf::FontRenderer,
+    #[cfg(feature = "ui-egui")]
+    pub egui_system: &'a crate::engine::system::egui::EguiSystem,
 }
 
 impl RenderContext<'_, '_> {

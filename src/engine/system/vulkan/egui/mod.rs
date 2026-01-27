@@ -325,6 +325,7 @@ impl EguiPipeline {
 
     fn update_textures(&self, textures_delta: &TexturesDelta) -> Result<(), UploadError> {
         let mut inner = self.inner.write().unwrap();
+
         inner
             .textures_to_free
             .extend(textures_delta.free.iter().copied());

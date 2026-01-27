@@ -141,5 +141,5 @@ pub struct TextureInner<T: ?Sized> {
     pub origin: Arc<()>,
     pub _image: Arc<Image>,
     pub descriptor: Arc<DescriptorSet>,
-    _t: PhantomData<T>,
+    _t: PhantomData<fn(T) -> T>,
 }
