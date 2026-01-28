@@ -5,21 +5,13 @@ use crate::engine::system::vulkan::PipelineTextureLoader;
 use crate::engine::types::world2d::Pos;
 use std::io::{BufRead, Cursor, Seek};
 
-pub struct SpriteAnimationLoader<'i> {
-    image_system: &'i ImageSystem,
+#[derive(Default)]
+pub struct SpriteAnimationLoader {
     padding: [f32; 4],
     sprite_size: Option<(f32, f32)>,
 }
 
-impl<'i> SpriteAnimationLoader<'i> {
-    pub fn new(image_system: &'i ImageSystem) -> Self {
-        Self {
-            image_system,
-            padding: [0.0; 4],
-            sprite_size: None,
-        }
-    }
-
+impl SpriteAnimationLoader {
     pub fn with_padding(mut self, padding: f32) -> Self {
         self.padding = [padding; 4];
         self
@@ -32,15 +24,14 @@ impl<'i> SpriteAnimationLoader<'i> {
 
     pub fn load_sprites<'a, P: PipelineTextureLoader + 'static, C: 'a>(
         &self,
+        image_system: &ImageSystem,
         loader: &P,
         image: C,
     ) -> Result<Vec<Sprite<P>>, TextureLoaderError>
     where
         Cursor<C>: 'a + BufRead + Seek,
     {
-        let mut texture = self
-            .image_system
-            .load_texture_from_raw_image(Cursor::new(image))?;
+        let mut texture = image_system.load_texture_from_raw_image(Cursor::new(image))?;
 
         texture
             .load_and_register_for(loader)

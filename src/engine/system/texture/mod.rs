@@ -90,6 +90,7 @@ impl TextureView {
                 egui::Vec2::new(width, height),
             ))
             .uv(rect)
+            .maintain_aspect_ratio(true)
         })
     }
 
@@ -194,6 +195,8 @@ impl Texture {
                             "Failed to downcast to TextureId<{:?}>: {e:?}",
                             std::any::type_name::<T>()
                         );
+                        #[cfg(not(debug_assertions))]
+                        let _ = e;
                         None
                     }
                 }
