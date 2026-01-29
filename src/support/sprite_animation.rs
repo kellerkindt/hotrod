@@ -1,9 +1,7 @@
-use crate::engine::system::texture::TextureLoaderExt;
-use crate::engine::system::texture::{Error as TextureLoaderError, TextureView};
-use crate::engine::system::vulkan::textures::{ImageSystem, TextureId};
+use crate::engine::system::texture::TextureView;
+use crate::engine::system::vulkan::textures::TextureId;
 use crate::engine::system::vulkan::PipelineTextureLoader;
 use crate::engine::types::world2d::Pos;
-use std::io::{BufRead, Cursor, Seek};
 
 #[derive(Default)]
 pub struct SpriteAnimationLoader {
@@ -22,37 +20,16 @@ impl SpriteAnimationLoader {
         self
     }
 
-    pub fn load_sprites<'a, P: PipelineTextureLoader + 'static, C: 'a>(
-        &self,
-        image_system: &ImageSystem,
-        loader: &P,
-        image: C,
-    ) -> Result<Vec<Sprite<P>>, TextureLoaderError>
-    where
-        Cursor<C>: 'a + BufRead + Seek,
-    {
-        let mut texture = image_system.load_texture_from_raw_image(Cursor::new(image))?;
-
-        texture
-            .load_and_register_for(loader)
-            .map_err(TextureLoaderError::VulkanError)?;
-
-        Ok(self
-            .load_sprites_from_texture::<P>(&texture.finalize())
-            .unwrap())
-    }
-
     pub fn load_sprites_from_texture<P: PipelineTextureLoader + 'static>(
         &self,
         view: &TextureView,
     ) -> Option<Vec<Sprite<P>>> {
         let texture_id = view.texture().get_texture_id::<P>()?;
-        let mem_image = view.texture().memory_image();
+        let image_width = view.width() as u32;
+        let image_height = view.height() as u32;
 
-        let image_width = mem_image.width() as f32;
-        let image_height = mem_image.height() as f32;
         let (sprite_width, sprite_height) = self.sprite_size.unwrap_or_else(|| {
-            let size = image_width.min(image_height);
+            let size = image_width.min(image_height) as f32;
             (size, size)
         });
         let sprite_size_padded_w = sprite_width - self.padding[1] - self.padding[3];
@@ -61,11 +38,10 @@ impl SpriteAnimationLoader {
         let origin_x = self.padding[3];
         let origin_y = self.padding[0];
 
-        let elements =
-            (mem_image.width() / mem_image.height()).max(mem_image.height() / mem_image.width());
+        let elements = (image_width / image_height).max(image_height / image_width);
 
-        let stride_x = (mem_image.width() / mem_image.height()).min(1) as f32;
-        let stride_y = (mem_image.height() / mem_image.width()).min(1) as f32;
+        let stride_x = (image_width / image_height).min(1) as f32;
+        let stride_y = (image_height / image_width).min(1) as f32;
 
         Some(
             (0..elements)
@@ -74,14 +50,14 @@ impl SpriteAnimationLoader {
 
                     let subview = view.subview(
                         [
-                            (origin_x + (i * stride_x * sprite_width)) / image_width,
-                            (origin_y + (i * stride_y * sprite_height)) / image_height,
+                            (origin_x + (i * stride_x * sprite_width)) / image_width as f32,
+                            (origin_y + (i * stride_y * sprite_height)) / image_height as f32,
                         ],
                         [
                             (origin_x + (i * stride_x * sprite_width) + sprite_size_padded_w)
-                                / image_width,
+                                / image_width as f32,
                             (origin_y + (i * stride_y * sprite_height) + sprite_size_padded_h)
-                                / image_height,
+                                / image_height as f32,
                         ],
                     );
 
@@ -94,6 +70,37 @@ impl SpriteAnimationLoader {
                 })
                 .collect::<Vec<_>>(),
         )
+    }
+}
+
+#[cfg(feature = "image")]
+mod image_ext {
+    use crate::engine::system::texture::{Error, TextureLoaderExt};
+    use crate::engine::system::vulkan::textures::ImageSystem;
+    use crate::engine::system::vulkan::PipelineTextureLoader;
+    use crate::support::sprite_animation::{Sprite, SpriteAnimationLoader};
+    use std::io::{BufRead, Cursor, Seek};
+
+    impl SpriteAnimationLoader {
+        pub fn load_sprites<'a, P: PipelineTextureLoader + 'static, C: 'a>(
+            &self,
+            image_system: &ImageSystem,
+            loader: &P,
+            image: C,
+        ) -> Result<Vec<Sprite<P>>, Error>
+        where
+            Cursor<C>: 'a + BufRead + Seek,
+        {
+            let mut texture = image_system.load_texture_from_raw_image(Cursor::new(image))?;
+
+            texture
+                .load_and_register_for(loader)
+                .map_err(Error::VulkanError)?;
+
+            Ok(self
+                .load_sprites_from_texture::<P>(&texture.finalize())
+                .unwrap())
+        }
     }
 }
 

@@ -73,6 +73,16 @@ impl TextureView {
         self.uv1.unwrap_or([1.0; 2])
     }
 
+    pub fn width(&self) -> f32 {
+        let w = self.uv1_or_default()[0] - self.uv0_or_default()[0];
+        self.texture.width() as f32 * w
+    }
+
+    pub fn height(&self) -> f32 {
+        let h = self.uv1_or_default()[1] - self.uv0_or_default()[1];
+        self.texture.height() as f32 * h
+    }
+
     #[cfg_attr(feature = "ui-egui", inline)]
     #[cfg(feature = "ui-egui")]
     pub fn egui_image(&self) -> Option<egui::Image<'_>> {
