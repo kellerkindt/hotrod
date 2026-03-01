@@ -33,6 +33,11 @@ impl Map2dView {
     }
 
     #[inline]
+    pub fn viewed_world_position(&self) -> (f32, f32) {
+        (self.view_x, self.view_y)
+    }
+
+    #[inline]
     pub fn zoom(&self) -> f32 {
         self.zoom
     }
@@ -83,6 +88,13 @@ impl Map2dView {
     pub fn set_viewed_world_position(&mut self, x: f32, y: f32) {
         self.view_x = x;
         self.view_y = y;
+    }
+
+    #[inline]
+    pub fn set_viewed_world_position_and_zoom(&mut self, x: f32, y: f32, zoom: f32) {
+        self.view_x = x;
+        self.view_y = y;
+        self.zoom = zoom;
     }
 }
 

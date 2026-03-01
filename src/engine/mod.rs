@@ -236,6 +236,16 @@ impl Engine {
     pub fn delay(&mut self) -> Duration {
         self.framerate_manager.delay()
     }
+
+    #[inline]
+    pub fn sdl(&self) -> &SdlParts {
+        &self.sdl
+    }
+
+    #[inline]
+    pub fn sdl_mut(&mut self) -> &mut SdlParts {
+        &mut self.sdl
+    }
 }
 
 impl Default for Engine {
