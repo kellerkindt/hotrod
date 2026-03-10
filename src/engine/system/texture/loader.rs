@@ -1,4 +1,3 @@
-use crate::engine::system::texture::Texture;
 use crate::engine::system::vulkan::textures::ImageSystem;
 use crate::engine::system::vulkan::UploadError;
 use std::sync::Arc;
@@ -10,7 +9,7 @@ pub trait TextureLoaderExt {
     fn load_texture_from_raw_image<'a, R: 'a + std::io::BufRead + std::io::Seek>(
         &self,
         bin: R,
-    ) -> Result<Texture, Error>;
+    ) -> Result<crate::engine::system::texture::Texture, Error>;
 }
 
 impl TextureLoaderExt for &ImageSystem {
@@ -19,7 +18,7 @@ impl TextureLoaderExt for &ImageSystem {
     fn load_texture_from_raw_image<'a, R: 'a + std::io::BufRead + std::io::Seek>(
         &self,
         bin: R,
-    ) -> Result<Texture, Error> {
+    ) -> Result<crate::engine::system::texture::Texture, Error> {
         TextureLoader::load_from_binary(self, bin)
     }
 }
@@ -31,7 +30,7 @@ impl TextureLoader {
     pub fn load_from_binary<'a, R: 'a + std::io::BufRead + std::io::Seek>(
         image_system: &ImageSystem,
         bin: R,
-    ) -> Result<Texture, Error> {
+    ) -> Result<crate::engine::system::texture::Texture, Error> {
         use image::GenericImageView;
         let mem_image = Self::read_image(bin)?;
         let gpu_image = Self::upload_image(
@@ -44,7 +43,7 @@ impl TextureLoader {
             mem_image.height(),
         )?;
 
-        Ok(Texture {
+        Ok(crate::engine::system::texture::Texture {
             vulkan_image: gpu_image,
             memory_image: mem_image,
             egui_texture: None,
