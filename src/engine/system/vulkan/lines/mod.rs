@@ -1,9 +1,14 @@
 use crate::engine::system::vulkan::buffers::BasicBuffersManager;
+use crate::engine::system::vulkan::color::Color;
+use crate::engine::system::vulkan::path::Path2d;
 use crate::engine::system::vulkan::system::{GraphicsPipelineRenderPassInfo, VulkanSystem};
+use crate::engine::system::vulkan::triangles::{Mode, TriangleCanvas};
 use crate::engine::system::vulkan::utils::Draw;
 use crate::engine::system::vulkan::wds::WriteDescriptorSetManager;
 use crate::engine::system::vulkan::{DrawError, PipelineCreateError, ShaderLoadError};
+use crate::engine::types::world2d::Pos;
 use crate::shader_from_path;
+use crate::support::world2d::view::Map2dView;
 use bytemuck::{Pod, Zeroable};
 use std::sync::Arc;
 use vulkano::command_buffer::AutoCommandBufferBuilder;
@@ -185,4 +190,141 @@ pub struct Vertex2d {
 pub struct Line {
     pub vertices: Vec<Vertex2d>,
     pub color: [f32; 4],
+}
+
+/// A simple helper type that constructs and collects [`Line`]s via simple and nice API calls in
+/// memory until flushed with a [`LinePipeline`] to a command buffer (see [`LineCanvas::flush_to`]).
+#[derive(Default)]
+pub struct LineCanvas {
+    color: Color,
+    lines: Vec<Line>,
+}
+
+impl LineCanvas {
+    pub fn new(color: impl Into<Color>) -> Self {
+        Self {
+            color: color.into(),
+            lines: Vec::new(),
+        }
+    }
+
+    pub fn set_color(&mut self, color: impl Into<Color>) {
+        self.color = color.into();
+    }
+
+    pub fn with_color(mut self, color: impl Into<Color>) -> Self {
+        self.set_color(color);
+        self
+    }
+
+    pub fn colored(&mut self, color: impl Into<Color>) -> &mut Self {
+        self.set_color(color);
+        self
+    }
+
+    pub fn draw_line_screen_space<T: Into<Pos<f32>>>(&mut self, points: impl Iterator<Item = T>) {
+        self.lines.push(Line {
+            color: self.color.rgba,
+            vertices: points
+                .map(|position| {
+                    let pos = position.into();
+                    Vertex2d { pos: pos.into() }
+                })
+                .collect(),
+        });
+    }
+
+    #[inline]
+    pub fn draw_line_world_space<T: Into<Pos<f32>>>(
+        &mut self,
+        points: impl Iterator<Item = T>,
+        view: &Map2dView,
+    ) {
+        self.draw_line_screen_space(points.map(|world| {
+            let screen = view.position_world_to_screen(world.into());
+            (screen.x, screen.y)
+        }))
+    }
+
+    pub fn draw_path_screen_space(&mut self, f: impl FnOnce(&mut Path2d)) {
+        let mut path = Path2d::default();
+        f(&mut path);
+        for line in path.into_lines() {
+            self.draw_line_screen_space(line.into_iter());
+        }
+    }
+
+    pub fn draw_path_world_space(&mut self, f: impl FnOnce(&mut Path2d), view: &Map2dView) {
+        let mut path = Path2d::default().with_tolerance(Path2d::DEFAULT_TOLERANCE / view.zoom());
+        f(&mut path);
+        for line in path.into_lines() {
+            self.draw_line_world_space(line.into_iter(), view);
+        }
+    }
+
+    pub fn draw_mesh(&mut self, triangle_canvas: &TriangleCanvas) {
+        for mode in &triangle_canvas.triangles {
+            match mode {
+                Mode::Simple(triangles) => {
+                    for triangle in triangles {
+                        self.lines.push(Line {
+                            color: self.color.rgba,
+                            vertices: triangle
+                                .vertices
+                                .iter()
+                                .map(|v| Vertex2d { pos: v.pos })
+                                .collect(),
+                        });
+                    }
+                }
+                Mode::Indexed(indexed) => {
+                    for indexed in indexed {
+                        for indices in &indexed.indices {
+                            self.lines.push(Line {
+                                color: self.color.rgba,
+                                vertices: indices
+                                    .into_iter()
+                                    .map(|i| indexed.vertices[*i as usize].pos)
+                                    .map(|p| Vertex2d { pos: p })
+                                    .collect(),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Flushes the content via the given [`LinePipeline`] as draw commands to the given command
+    /// buffer. Will clear known lines on success. Does not free memory until dropped. If you want
+    /// to prevent regular re-allocations, then keep this [`LineCanvas`] instance alive and re-use
+    /// it for the next batch.
+    pub fn flush_to<P>(
+        &mut self,
+        pipeline: &LinePipeline,
+        builder: &mut AutoCommandBufferBuilder<P>,
+    ) -> Result<(), DrawError> {
+        if self.lines.is_empty() {
+            Ok(())
+        } else {
+            match pipeline.draw(builder, &self.lines[..]) {
+                Ok(()) => {
+                    self.lines.clear();
+                    Ok(())
+                }
+                Err(e) => Err(e),
+            }
+        }
+    }
+}
+
+impl Drop for LineCanvas {
+    fn drop(&mut self) {
+        if !self.lines.is_empty() {
+            warn!(
+                "Dropping {} without being flushed.",
+                core::any::type_name::<Self>()
+            );
+        }
+    }
 }

@@ -10,6 +10,12 @@ pub use sdl2;
 pub use thiserror;
 pub use vulkano;
 
+#[cfg(feature = "lyon-geom")]
+pub use lyon_geom;
+
+#[cfg(feature = "lyon-tessellation")]
+pub use lyon_tessellation;
+
 pub mod engine;
 pub mod hint;
 pub mod support;

@@ -39,6 +39,8 @@ serde_derive = { version = "1.0", optional = true }
 serde-xml-rs = { version = "0.6.0", optional = true }
 
 image = { version = "0.25", optional = true }
+lyon_geom = { version = "1.0.19", default-features = false, optional = true }
+lyon_tessellation = { version = "1.0.20", optional = true }
 
 [features]
 default = [
@@ -48,7 +50,9 @@ default = [
     "serde-io",
     "serde-io-xml",
     "logging-initializer",
-    "tracing-subscriber-env-filter"
+    "tracing-subscriber-env-filter",
+    "lyon-geom",
+    "lyon-tessellation"
 ]
 
 ui-egui = ["egui", "egui_extras", "egui-notify"]
@@ -59,3 +63,5 @@ serde-io = ["serde", "serde_derive"]
 serde-io-xml = ["serde-io", "serde-xml-rs"]
 logging-initializer = ["tracing-subscriber"]
 tracing-subscriber-env-filter = ["tracing-subscriber", "tracing-subscriber/env-filter"]
+lyon-geom = ["lyon_geom"]
+lyon-tessellation = ["lyon_tessellation"]
