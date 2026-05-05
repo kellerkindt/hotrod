@@ -6,7 +6,7 @@ use crate::engine::system::vulkan::triangles::{Mode, TriangleCanvas};
 use crate::engine::system::vulkan::utils::Draw;
 use crate::engine::system::vulkan::wds::WriteDescriptorSetManager;
 use crate::engine::system::vulkan::{DrawError, PipelineCreateError, ShaderLoadError};
-use crate::engine::types::world2d::Pos;
+use crate::engine::types::world2d::{Dim, Pos};
 use crate::shader_from_path;
 use crate::support::world2d::view::Map2dView;
 use bytemuck::{Pod, Zeroable};
@@ -244,6 +244,48 @@ impl LineCanvas {
             let screen = view.position_world_to_screen(world.into());
             (screen.x, screen.y)
         }))
+    }
+
+    #[inline]
+    pub fn draw_rect_screen_space(
+        &mut self,
+        position: impl Into<Pos<f32>>,
+        size: impl Into<Dim<f32>>,
+    ) {
+        let position = position.into();
+        let size = size.into();
+        self.draw_line_screen_space(
+            [
+                position,
+                position + Dim::new(size.x, 0.0),
+                position + size,
+                position + Dim::new(0.0, size.y),
+                position,
+            ]
+            .into_iter(),
+        )
+    }
+
+    #[inline]
+    pub fn draw_rect_world_space(
+        &mut self,
+        position: impl Into<Pos<f32>>,
+        size: impl Into<Dim<f32>>,
+        view: &Map2dView,
+    ) {
+        let position = position.into();
+        let size = size.into();
+        self.draw_line_world_space(
+            [
+                position,
+                position + Dim::new(size.x, 0.0),
+                position + size,
+                position + Dim::new(0.0, size.y),
+                position,
+            ]
+            .into_iter(),
+            view,
+        )
     }
 
     pub fn draw_path_screen_space(&mut self, f: impl FnOnce(&mut Path2d)) {

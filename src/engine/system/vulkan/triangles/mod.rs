@@ -5,6 +5,7 @@ use crate::engine::system::vulkan::system::{GraphicsPipelineRenderPassInfo, Vulk
 use crate::engine::system::vulkan::utils::Draw;
 use crate::engine::system::vulkan::wds::WriteDescriptorSetManager;
 use crate::engine::system::vulkan::{DrawError, PipelineCreateError, ShaderLoadError};
+use crate::engine::types::world2d::{Dim, Pos};
 use crate::shader_from_path;
 use crate::support::world2d::view::Map2dView;
 use bytemuck::{Pod, Zeroable};
@@ -294,6 +295,46 @@ impl TriangleCanvas {
     pub fn colored(&mut self, color: impl Into<Color>) -> &mut Self {
         self.set_color(color);
         self
+    }
+
+    pub fn fill_rect_screen_space(
+        &mut self,
+        position: impl Into<Pos<f32>>,
+        size: impl Into<Dim<f32>>,
+    ) {
+        let position = position.into();
+        let size = size.into();
+        self.extend_indexed([TrianglesIndexed {
+            vertices: vec![
+                Vertex2d {
+                    pos: [position.x, position.y],
+                },
+                Vertex2d {
+                    pos: [position.x + size.x, position.y],
+                },
+                Vertex2d {
+                    pos: [position.x + size.x, position.y + size.y],
+                },
+                Vertex2d {
+                    pos: [position.x, position.y + size.y],
+                },
+            ],
+            indices: vec![[0, 1, 2], [2, 3, 0]],
+            color: self.color.rgba,
+        }])
+    }
+
+    #[inline]
+    pub fn fill_rect_world_space(
+        &mut self,
+        position: impl Into<Pos<f32>>,
+        size: impl Into<Dim<f32>>,
+        view: &Map2dView,
+    ) {
+        self.fill_rect_screen_space(
+            view.position_world_to_screen(position.into()),
+            view.distance_world_to_screen(size.into()),
+        )
     }
 
     fn extend_simple(&mut self, triangles: impl IntoIterator<Item = Triangles>) {
