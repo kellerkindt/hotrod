@@ -1,6 +1,5 @@
 use crate::engine::system::vulkan::buffers::BasicBuffersManager;
 use crate::engine::system::vulkan::color::Color;
-use crate::engine::system::vulkan::path::Path2d;
 use crate::engine::system::vulkan::system::{GraphicsPipelineRenderPassInfo, VulkanSystem};
 use crate::engine::system::vulkan::utils::Draw;
 use crate::engine::system::vulkan::wds::WriteDescriptorSetManager;
@@ -396,6 +395,7 @@ impl TriangleCanvas {
 #[cfg(feature = "lyon_tessellation")]
 mod lyon_tesselation {
     use super::*;
+    use crate::engine::system::vulkan::path::Path2d;
     use crate::engine::types::world2d::Pos;
     use lyon_geom::point;
     use lyon_tessellation::geometry_builder::simple_builder;
