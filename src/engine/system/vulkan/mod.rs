@@ -5,7 +5,9 @@ use vulkano::image::{AllocateImageError, Image};
 use vulkano::pipeline::layout::IntoPipelineLayoutCreateInfoError;
 use vulkano::{Validated, ValidationError, VulkanError};
 
+pub mod color;
 pub mod desc;
+pub mod path;
 pub mod utils;
 
 pub mod beautiful_lines;

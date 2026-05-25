@@ -612,7 +612,7 @@ pub struct RenderContext<'a> {
     swapchain_framebuffer: &'a Arc<Framebuffer>,
     command_buffer_allocator: &'a Arc<StandardCommandBufferAllocator>,
     write_descriptor_set_manager: &'a WriteDescriptorSetManager,
-    image_system: &'a ImageSystem,
+    image_system: &'a Arc<ImageSystem>,
 }
 
 impl<'a> RenderContext<'a> {
@@ -681,7 +681,7 @@ impl<'a> RenderContext<'a> {
     }
 
     #[inline]
-    pub fn image_system(&self) -> &ImageSystem {
+    pub fn image_system(&self) -> &Arc<ImageSystem> {
         self.image_system
     }
 }

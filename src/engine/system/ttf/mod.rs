@@ -8,14 +8,15 @@ use sdl2::pixels::{Color, PixelFormatEnum};
 use sdl2::rwops::RWops;
 use sdl2::ttf::{Font, Sdl2TtfContext};
 use std::borrow::Cow;
+use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-type CacheUpdate = (String, Vec<u8>, u32, u32);
+type CacheUpdate = ([u8; 4], u16, String, Vec<u8>, u32, u32);
 
 pub struct FontRenderer {
     dummy_image: Option<TextureId<TexturedPipeline>>,
-    cache: FxHashMap<String, (TextureId<TexturedPipeline>, f32, f32, u8)>,
+    cache: FxHashMap<([u8; 4], u16, String), (TextureId<TexturedPipeline>, f32, f32, u8)>,
     sender: Sender<FontRenderRequest>,
     update_queue: Arc<SegQueue<CacheUpdate>>,
 }
@@ -66,15 +67,16 @@ impl FontRenderer {
     ) -> Textured {
         self.retrieve_threaded_updates(textured_pipeline, image_system);
 
-        let (texture, w, h) = match self.cache.get_mut(text) {
+        let (texture, w, h) = match self.cache.entry((color, size, text.to_string())) {
             // Fine, it already exists, just reset the counter
-            Some((texture_id, w, h, counter)) => {
+            Entry::Occupied(mut occupied) => {
+                let (texture_id, w, h, counter) = occupied.get_mut();
                 *counter = Self::DEFAULT_LAST_USED_COUNTER;
                 (texture_id.clone(), *w, *h)
             }
             // In this scenario, the text is submitted for rendering to the separate thread while
             // this context continues on returning a `Textured` instance with a dummy texture.
-            None => {
+            Entry::Vacant(entry) => {
                 if let Err(e) = self.sender.send(FontRenderRequest {
                     size,
                     color,
@@ -83,18 +85,18 @@ impl FontRenderer {
                     error!("Failed to send FontRenderRequest: {e}");
                 }
 
-                let dummy_texture =
-                    self.get_or_create_dummy_texture(textured_pipeline, image_system);
-
-                self.cache.insert(
-                    text.to_string(),
-                    (
-                        dummy_texture.clone(),
-                        Self::DUMMY_TEXTURE_WIDTH as f32,
-                        Self::DUMMY_TEXTURE_HEIGHT as f32,
-                        Self::DEFAULT_LAST_USED_COUNTER,
-                    ),
+                let dummy_texture = Self::get_or_create_dummy_texture(
+                    &mut self.dummy_image,
+                    textured_pipeline,
+                    image_system,
                 );
+
+                entry.insert((
+                    dummy_texture.clone(),
+                    Self::DUMMY_TEXTURE_WIDTH as f32,
+                    Self::DUMMY_TEXTURE_HEIGHT as f32,
+                    Self::DEFAULT_LAST_USED_COUNTER,
+                ));
 
                 (
                     dummy_texture,
@@ -136,11 +138,11 @@ impl FontRenderer {
     }
 
     fn get_or_create_dummy_texture(
-        &mut self,
+        dummy_image: &mut Option<TextureId<TexturedPipeline>>,
         textured_pipeline: &TexturedPipeline,
         image_system: &ImageSystem,
     ) -> TextureId<TexturedPipeline> {
-        self.dummy_image.clone().unwrap_or_else(|| {
+        dummy_image.clone().unwrap_or_else(|| {
             let image = image_system
                 .create_image_and_enqueue_upload(
                     Self::DUMMY_TEXTURE_RGBA,
@@ -151,7 +153,7 @@ impl FontRenderer {
 
             let texture = textured_pipeline.prepare_texture(image).unwrap();
 
-            self.dummy_image = Some(texture.clone());
+            *dummy_image = Some(texture.clone());
             texture
         })
     }
@@ -161,12 +163,13 @@ impl FontRenderer {
         textured_pipeline: &TexturedPipeline,
         image_system: &ImageSystem,
     ) {
-        while let Some((text, image_data, w, h)) = self.update_queue.pop() {
+        while let Some((color, size, text, image_data, w, h)) = self.update_queue.pop() {
             let image = image_system
                 .create_image_and_enqueue_upload(image_data, w, h)
                 .unwrap();
             let texture = textured_pipeline.prepare_texture(image).unwrap();
-            self.cache.insert(text, (texture, w as f32, h as f32, 0));
+            self.cache
+                .insert((color, size, text), (texture, w as f32, h as f32, 0));
         }
     }
 }
@@ -216,7 +219,7 @@ impl<'a> FontRendererThread<'a> {
         }
     }
 
-    #[instrument(level = "info", skip(self))]
+    #[instrument(level = "debug", skip(self))]
     fn process_request(&mut self, text: String, size: u16, [r, g, b, a]: [u8; 4]) {
         let font = self
             .fonts
@@ -231,10 +234,11 @@ impl<'a> FontRendererThread<'a> {
         let w = surface.width();
         let h = surface.height();
 
-        self.result_queue.push((text, data, w, h));
+        self.result_queue
+            .push(([r, g, b, a], size, text, data, w, h));
     }
 
-    #[instrument(level = "info", skip(ctx, data))]
+    #[instrument(level = "debug", skip(ctx, data))]
     fn load_font_for_size<'ctx, 'data>(
         ctx: &'ctx Sdl2TtfContext,
         data: &'data [u8],

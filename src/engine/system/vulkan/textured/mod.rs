@@ -248,6 +248,46 @@ pub struct Textured {
     pub texture: TextureId<TexturedPipeline>,
 }
 
+impl Textured {
+    pub fn image_at(
+        texture: TextureId<TexturedPipeline>,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+    ) -> Self {
+        Self {
+            texture,
+            vertices: vec![
+                Vertex2dUv {
+                    pos: [x, y],
+                    uv: [0.0, 0.0],
+                },
+                Vertex2dUv {
+                    pos: [x, y + height],
+                    uv: [0.0, 1.0],
+                },
+                Vertex2dUv {
+                    pos: [x + width, y + height],
+                    uv: [1.0, 1.0],
+                },
+                Vertex2dUv {
+                    pos: [x, y],
+                    uv: [0.0, 0.0],
+                },
+                Vertex2dUv {
+                    pos: [x + width, y],
+                    uv: [1.0, 0.0],
+                },
+                Vertex2dUv {
+                    pos: [x + width, y + height],
+                    uv: [1.0, 1.0],
+                },
+            ],
+        }
+    }
+}
+
 pub struct TexturedIndexed {
     pub vertices: Vec<Vertex2dUv>,
     pub indices: Vec<[u32; 3]>,
