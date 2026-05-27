@@ -70,11 +70,12 @@ fn main() {
         let loop_start = Instant::now();
         let response = engine.update(|mut ctx| {
             // handle all new inputs
-            let quit = ctx.events.drain(..).any(|e| wants_to_quit(e));
+            let mut quit = false;
 
             // update the UI
-            ctx.update_egui(|ctx| {
-                show_stats_windows(ctx, duration_engine, duration_loop);
+            ctx.consume_input_updates_with_egui(|ctx| {
+                quit = ctx.events.into_iter().any(|e| wants_to_quit(e));
+                show_stats_windows(ctx.egui_context, duration_engine, duration_loop);
             });
 
             // render custom stuff

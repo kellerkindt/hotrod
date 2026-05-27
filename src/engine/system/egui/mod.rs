@@ -14,8 +14,6 @@ pub struct EguiSystem {
     context: Context,
     binding: Sdl2EguiMapping,
     current_cursor: Option<CursorIcon>,
-    pub(crate) width: f32,
-    pub(crate) height: f32,
     /// [`TexturesDelta`] to upload next
     pub(crate) texture_delta: TexturesDelta,
     /// [`ClippedPrimitive`] to render next
@@ -25,7 +23,9 @@ pub struct EguiSystem {
 impl EguiSystem {
     #[inline]
     pub fn wants_input(&self) -> bool {
-        self.context.wants_keyboard_input() || self.context.wants_pointer_input()
+        self.context.egui_wants_keyboard_input()
+            || self.context.egui_wants_pointer_input()
+            || self.context.egui_is_using_pointer()
     }
 
     #[inline]
@@ -44,11 +44,18 @@ impl EguiSystem {
     }
 
     #[inline]
-    pub fn set_sdl2_view_area<I: Into<sdl2::rect::Rect>>(&mut self, area: I) {
-        let area = area.into();
-        self.width = area.width() as f32;
-        self.height = area.height() as f32;
-        self.binding.set_sdl2_view_area(area);
+    pub fn pixels_view_area(&self) -> sdl2::rect::Rect {
+        self.binding.pixels_view_area()
+    }
+
+    #[inline]
+    pub fn points_view_area(&self) -> egui::emath::Rect {
+        self.binding.points_view_area()
+    }
+
+    #[inline]
+    pub fn pixels_per_point(&self) -> f32 {
+        self.binding.pixels_per_point()
     }
 
     #[inline]
@@ -65,12 +72,13 @@ impl EguiSystem {
         sdl: &mut SdlParts,
         ui: impl FnOnce(&Context),
     ) {
-        self.set_sdl2_view_area(sdl2::rect::Rect::new(0, 0, width, height));
+        self.binding
+            .set_view_area(sdl2::rect::Rect::new(0, 0, width, height));
 
         let input = RawInputShim(self.binding.take_input())
             .with_injected_shortcuts(|| sdl.video_subsystem.clipboard());
 
-        let output = self.context.run(input, {
+        let output = self.context.run_ui(input, {
             let mut ui = Some(ui);
             move |ctx| {
                 if let Some(ui) = ui.take() {
@@ -109,6 +117,8 @@ impl EguiSystem {
         self.clipped_primitives = self
             .context
             .tessellate(output.shapes, output.pixels_per_point);
+
+        self.binding.set_pixels_per_point(output.pixels_per_point);
     }
 }
 

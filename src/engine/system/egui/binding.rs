@@ -1,6 +1,6 @@
 use egui::{
     CursorIcon, DroppedFile, HoveredFile, Key, MouseWheelUnit, PointerButton, Pos2, RawInput, Rect,
-    Vec2, ViewportEvent, ViewportId, ViewportInfo,
+    TouchPhase, Vec2, ViewportEvent, ViewportId, ViewportInfo,
 };
 use sdl2::event::{Event, WindowEvent};
 use sdl2::keyboard::Keycode;
@@ -11,6 +11,7 @@ use std::time::UNIX_EPOCH;
 
 pub(crate) struct Sdl2EguiMapping {
     input: RawInput,
+    pixels_per_point: f32,
 }
 
 impl Default for Sdl2EguiMapping {
@@ -24,6 +25,7 @@ impl Default for Sdl2EguiMapping {
                 focused: true,
                 ..Default::default()
             },
+            pixels_per_point: 1.0,
         }
     }
 }
@@ -33,6 +35,7 @@ impl Sdl2EguiMapping {
         RawInput {
             viewport_id: self.input.viewport_id,
             viewports: self.input.viewports.clone(),
+            safe_area_insets: None,
             screen_rect: self.input.screen_rect,
             max_texture_side: self.input.max_texture_side,
             time: Some(UNIX_EPOCH.elapsed().unwrap_or_default().as_secs_f64()),
@@ -91,16 +94,43 @@ impl Sdl2EguiMapping {
         Cursor::from_system(Self::cursor_icon_to_system_cursor(cursor_icon)).ok()
     }
 
-    pub fn set_sdl2_view_area<I: Into<sdl2::rect::Rect>>(&mut self, area: I) {
+    /// Updates the view area from pixel coordinates
+    pub fn set_view_area<I: Into<sdl2::rect::Rect>>(&mut self, area: I) {
         let area = area.into();
-        let x = area.x() as f32;
-        let y = area.y() as f32;
-        let w = area.width() as f32;
-        let h = area.height() as f32;
+        let x = area.x() as f32 / self.pixels_per_point;
+        let y = area.y() as f32 / self.pixels_per_point;
+        let w = area.width() as f32 / self.pixels_per_point;
+        let h = area.height() as f32 / self.pixels_per_point;
         self.input.screen_rect = Some(Rect {
             min: Pos2::new(x, y),
             max: Pos2::new(x + w, y + h),
         });
+    }
+
+    /// Returns the view area in pixel coordinates
+    pub fn pixels_view_area(&self) -> sdl2::rect::Rect {
+        match self.input.screen_rect {
+            None => sdl2::rect::Rect::new(0, 0, u32::MAX, u32::MAX),
+            Some(rect) => sdl2::rect::Rect::new(
+                (rect.min.x * self.pixels_per_point).floor() as i32,
+                (rect.min.y * self.pixels_per_point).floor() as i32,
+                (rect.width() * self.pixels_per_point).ceil() as u32,
+                (rect.height() * self.pixels_per_point).ceil() as u32,
+            ),
+        }
+    }
+
+    /// Returns the view area in egui-point coordinates
+    pub fn points_view_area(&self) -> Rect {
+        self.input.screen_rect.unwrap_or_else(|| Rect::EVERYTHING)
+    }
+
+    pub fn set_pixels_per_point(&mut self, pixels_per_point: f32) {
+        self.pixels_per_point = pixels_per_point;
+    }
+
+    pub fn pixels_per_point(&self) -> f32 {
+        self.pixels_per_point
     }
 
     pub fn set_target_frame_rate(&mut self, fps: u16) {
@@ -144,6 +174,9 @@ impl Sdl2EguiMapping {
                     Some(Keycode::Num7) => Key::Num7,
                     Some(Keycode::Num8) => Key::Num8,
                     Some(Keycode::Num9) => Key::Num9,
+
+                    Some(Keycode::Plus) => Key::Plus,
+                    Some(Keycode::Minus) => Key::Minus,
 
                     Some(Keycode::A) => Key::A, // Used for cmd+A (select All)
                     Some(Keycode::B) => Key::B,
@@ -226,7 +259,7 @@ impl Sdl2EguiMapping {
             Event::MouseMotion { x, y, .. } => self
                 .input
                 .events
-                .push(egui::Event::PointerMoved(Pos2::new(*x as f32, *y as f32))),
+                .push(egui::Event::PointerMoved(self.to_point_pos(*x, *y))),
             Event::MouseButtonDown {
                 x, y, mouse_btn, ..
             }
@@ -240,7 +273,7 @@ impl Sdl2EguiMapping {
                     _ => return,
                 };
                 self.input.events.push(egui::Event::PointerButton {
-                    pos: Pos2::new(*x as f32, *y as f32),
+                    pos: self.to_point_pos(*x, *y),
                     button,
                     pressed: matches!(event, Event::MouseButtonDown { .. }),
                     modifiers: self.input.modifiers,
@@ -252,8 +285,9 @@ impl Sdl2EguiMapping {
                 ..
             } => self.input.events.push(egui::Event::MouseWheel {
                 unit: MouseWheelUnit::Point,
-                delta: Vec2::new(*precise_x, *precise_y),
+                delta: self.to_point_vec(*precise_x, *precise_y),
                 modifiers: self.input.modifiers,
+                phase: TouchPhase::Move,
             }),
             Event::DropFile { filename, .. } => {
                 self.input.hovered_files.push(HoveredFile {
@@ -307,6 +341,17 @@ impl Sdl2EguiMapping {
             },
             _ => {}
         }
+    }
+
+    fn to_point_pos(&self, x: i32, y: i32) -> Pos2 {
+        Pos2::new(
+            x as f32 / self.pixels_per_point,
+            y as f32 / self.pixels_per_point,
+        )
+    }
+
+    fn to_point_vec(&self, w: f32, h: f32) -> Vec2 {
+        Vec2::new(w / self.pixels_per_point, h / self.pixels_per_point)
     }
 
     fn on_current_viewport_mut(&mut self, f: impl FnOnce(&mut ViewportInfo)) {

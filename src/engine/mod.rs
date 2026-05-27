@@ -278,7 +278,7 @@ pub enum Error {
 }
 
 pub struct BeforeRenderContext<'a> {
-    engine: &'a mut Engine,
+    pub engine: &'a mut Engine,
     pub events: Vec<Event>,
     pub width: u32,
     pub height: u32,
@@ -287,10 +287,17 @@ pub struct BeforeRenderContext<'a> {
 
 impl<'a> BeforeRenderContext<'a> {
     #[cfg(feature = "ui-egui")]
-    pub fn update_egui(&mut self, f: impl FnOnce(&egui::Context)) {
+    pub fn consume_input_updates_with_egui(&mut self, f: impl FnOnce(EguiUpdateContext)) {
+        let events = core::mem::take(&mut self.events);
+
         self.engine
             .egui_system
-            .update(self.width, self.height, &mut self.engine.sdl, f)
+            .update(self.width, self.height, &mut self.engine.sdl, move |ctx| {
+                f(EguiUpdateContext {
+                    egui_context: ctx,
+                    events,
+                })
+            })
     }
 
     #[inline]
@@ -385,4 +392,10 @@ pub struct RenderResponse<T> {
     pub data: T,
     pub start: Instant,
     pub duration: Duration,
+}
+
+#[cfg(feature = "ui-egui")]
+pub struct EguiUpdateContext<'a> {
+    pub egui_context: &'a egui::Context,
+    pub events: Vec<Event>,
 }

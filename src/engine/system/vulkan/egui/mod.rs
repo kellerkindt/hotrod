@@ -10,10 +10,7 @@ use crate::shader_from_path;
 use crate::ui::egui::epaint::{ImageDelta, Primitive};
 use crate::ui::egui::{TextureFilter, TextureWrapMode};
 use bytemuck::{Pod, Zeroable};
-use egui::{
-    ClippedPrimitive, Color32, ImageData, Rect, TextureId as EguiTextureId, TextureOptions,
-    TexturesDelta,
-};
+use egui::{Color32, ImageData, Rect, TextureId as EguiTextureId, TextureOptions, TexturesDelta};
 use nohash_hasher::NoHashHasher;
 use std::collections::HashMap;
 use std::hash::BuildHasherDefault;
@@ -223,16 +220,10 @@ impl EguiPipeline {
         builder: &mut AutoCommandBufferBuilder<P>,
         egui: &EguiSystem,
     ) -> Result<(), DrawError> {
-        self.draw_internal(builder, egui.width, egui.height, &egui.clipped_primitives)
-    }
+        let pixels_per_point = egui.pixels_per_point();
+        let points_view_area = egui.points_view_area();
+        let clipped_primitives = &egui.clipped_primitives;
 
-    fn draw_internal<P>(
-        &self,
-        builder: &mut AutoCommandBufferBuilder<P>,
-        width: f32,
-        height: f32,
-        clipped_primitives: &[ClippedPrimitive],
-    ) -> Result<(), DrawError> {
         let mut vertices = Vec::<AdapterVertex>::with_capacity(clipped_primitives.len() * 4);
         let mut indices = Vec::<u32>::with_capacity(clipped_primitives.len() * 6);
         let mut clip_rects = Vec::<Rect>::with_capacity(clipped_primitives.len());
@@ -275,7 +266,11 @@ impl EguiPipeline {
             .bind_pipeline_graphics(Arc::clone(&self.pipeline))?
             .bind_index_buffer(index_buffer)?
             .bind_vertex_buffers(0, vertex_buffer)?
-            .push_constants(Arc::clone(&self.pipeline.layout()), 0, [width, height])?;
+            .push_constants(
+                Arc::clone(&self.pipeline.layout()),
+                0,
+                [points_view_area.width(), points_view_area.height()],
+            )?;
 
         let inner = self.inner.read().unwrap();
         for (index, rect) in clip_rects.into_iter().enumerate() {
@@ -287,8 +282,14 @@ impl EguiPipeline {
                     .set_scissor(
                         0,
                         [Scissor {
-                            offset: [rect.min.x as u32, rect.min.y as u32],
-                            extent: [rect.width() as u32, rect.height() as u32],
+                            offset: [
+                                (rect.min.x * pixels_per_point).floor() as u32,
+                                (rect.min.y * pixels_per_point).floor() as u32,
+                            ],
+                            extent: [
+                                (rect.width() * pixels_per_point).ceil() as u32,
+                                (rect.height() * pixels_per_point).ceil() as u32,
+                            ],
                         }]
                         .into_iter()
                         .collect(),
