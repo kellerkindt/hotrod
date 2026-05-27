@@ -1,7 +1,7 @@
 use crate::engine::parts::sdl::SdlParts;
 use crate::ui::egui::ClippedPrimitive;
 use binding::Sdl2EguiMapping;
-use egui::{Context, CursorIcon, Key, OutputCommand, RawInput, TexturesDelta};
+use egui::{Context, CursorIcon, Key, OutputCommand, RawInput, TexturesDelta, Ui};
 use sdl2::clipboard::ClipboardUtil;
 use sdl2::event::Event;
 
@@ -70,7 +70,7 @@ impl EguiSystem {
         width: u32,
         height: u32,
         sdl: &mut SdlParts,
-        ui: impl FnOnce(&Context),
+        ui: impl FnOnce(&mut Ui),
     ) {
         self.binding
             .set_view_area(sdl2::rect::Rect::new(0, 0, width, height));

@@ -293,10 +293,7 @@ impl<'a> BeforeRenderContext<'a> {
         self.engine
             .egui_system
             .update(self.width, self.height, &mut self.engine.sdl, move |ctx| {
-                f(EguiUpdateContext {
-                    egui_context: ctx,
-                    events,
-                })
+                f(EguiUpdateContext { egui: ctx, events })
             })
     }
 
@@ -396,6 +393,6 @@ pub struct RenderResponse<T> {
 
 #[cfg(feature = "ui-egui")]
 pub struct EguiUpdateContext<'a> {
-    pub egui_context: &'a egui::Context,
+    pub egui: &'a mut egui::Ui,
     pub events: Vec<Event>,
 }

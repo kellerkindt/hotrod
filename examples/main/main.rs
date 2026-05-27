@@ -75,7 +75,7 @@ fn main() {
             // update the UI
             ctx.consume_input_updates_with_egui(|ctx| {
                 quit = ctx.events.into_iter().any(|e| wants_to_quit(e));
-                show_stats_windows(ctx.egui_context, duration_engine, duration_loop);
+                show_stats_windows(ctx.egui, duration_engine, duration_loop);
             });
 
             // render custom stuff
