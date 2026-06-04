@@ -228,6 +228,7 @@ impl World2dEntitiesPipeline {
         self.draw_nested(builder, texture, Some(instances).into_iter())
     }
 
+    #[inline]
     fn draw_nested<P, I>(
         &self,
         builder: &mut AutoCommandBufferBuilder<P>,
@@ -299,6 +300,41 @@ pub struct EntityInstanceData {
     pub uv1: [f32; 2],
     #[format(R32_SFLOAT)]
     pub size: f32,
+    #[format(R32G32B32_SFLOAT)]
+    pub outline_color: [f32; 3],
+    #[format(R32_SFLOAT)]
+    pub outline_size: f32,
+}
+
+impl EntityInstanceData {
+    #[inline]
+    pub fn new(
+        pos: impl Into<[f32; 2]>,
+        uv0: impl Into<[f32; 2]>,
+        uv1: impl Into<[f32; 2]>,
+        size: f32,
+    ) -> Self {
+        Self {
+            entity_pos: pos.into(),
+            uv0: uv0.into(),
+            uv1: uv1.into(),
+            size: size.into(),
+            outline_color: [0.0; _],
+            outline_size: 0.0,
+        }
+    }
+
+    #[inline]
+    pub fn with_outline(mut self, color: impl Into<[f32; 3]>, size: f32) -> Self {
+        self.set_outline(color, size);
+        self
+    }
+
+    #[inline]
+    pub fn set_outline(&mut self, color: impl Into<[f32; 3]>, size: f32) {
+        self.outline_color = color.into();
+        self.outline_size = size;
+    }
 }
 
 pub struct EntityPreparedDraw {

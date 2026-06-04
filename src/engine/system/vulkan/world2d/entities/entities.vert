@@ -8,11 +8,15 @@ layout(location = 1) in vec2 entity_pos;
 layout(location = 2) in vec2 uv0;
 layout(location = 3) in vec2 uv1;
 layout(location = 4) in float size;
+layout(location = 5) in vec3 outline_color;
+layout(location = 6) in float outline_size;
 
 layout(binding = 101) uniform WindowProperties { vec2 screen_size; } window;
 layout(binding = 201) uniform WorldView2d { vec2 position; float zoom; } view;
 
 layout(location = 0) out vec2 out_uv;
+layout(location = 1) out vec3 out_outline_color;
+layout(location = 2) out float out_outline_size;
 
 void main() {
     gl_Position = vec4(
@@ -24,4 +28,6 @@ void main() {
 
 
     out_uv = mix(uv0, uv1, pos + 0.5);
+    out_outline_color = outline_color;
+    out_outline_size = outline_size;
 }
