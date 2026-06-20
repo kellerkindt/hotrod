@@ -10,11 +10,13 @@ use vulkano::{Validated, VulkanError};
 mod loader;
 pub use loader::*;
 
+type TextureRegistryKey = Arc<dyn Any + Send + Sync + 'static>;
+
 /// The [`TextureRegistry`] has the purpose to provide a centralized location to register and
 /// query image resources for various lookup keys.
 #[derive(Default)]
 pub struct TextureRegistry {
-    register: AHashMap<TypeId, Vec<(Arc<dyn Any + Send + Sync + 'static>, TextureView)>>,
+    register: AHashMap<TypeId, Vec<(TextureRegistryKey, TextureView)>>,
 }
 
 impl TextureRegistry {
@@ -22,7 +24,7 @@ impl TextureRegistry {
     where
         T: Any + Send + Sync + 'static,
     {
-        let lookup = Arc::new(lookup) as Arc<dyn Any + Send + Sync + 'static>;
+        let lookup = Arc::new(lookup) as TextureRegistryKey;
         match self.register.entry(TypeId::of::<T>()) {
             Entry::Occupied(mut vec) => {
                 vec.get_mut().push((lookup, view));
