@@ -73,37 +73,6 @@ impl SpriteAnimationLoader {
     }
 }
 
-#[cfg(feature = "image")]
-mod image_ext {
-    use crate::engine::system::texture::{Error, TextureLoaderExt};
-    use crate::engine::system::vulkan::textures::ImageSystem;
-    use crate::engine::system::vulkan::PipelineTextureLoader;
-    use crate::support::sprite_animation::{Sprite, SpriteAnimationLoader};
-    use std::io::{BufRead, Cursor, Seek};
-
-    impl SpriteAnimationLoader {
-        pub fn load_sprites<'a, P: PipelineTextureLoader + 'static, C: 'a>(
-            &self,
-            image_system: &ImageSystem,
-            loader: &P,
-            image: C,
-        ) -> Result<Vec<Sprite<P>>, Error>
-        where
-            Cursor<C>: 'a + BufRead + Seek,
-        {
-            let mut texture = image_system.load_texture_from_raw_image(Cursor::new(image))?;
-
-            texture
-                .load_and_register_for(loader)
-                .map_err(Error::VulkanError)?;
-
-            Ok(self
-                .load_sprites_from_texture::<P>(&texture.finalize())
-                .unwrap())
-        }
-    }
-}
-
 pub struct Sprite<P> {
     pub texture: TextureId<P>,
     pub view: TextureView,

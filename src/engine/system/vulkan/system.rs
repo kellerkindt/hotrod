@@ -2,15 +2,16 @@ use crate::engine::system::vulkan::buffers::BasicBuffersManager;
 use crate::engine::system::vulkan::desc::binding_101_window_size::WindowSize;
 use crate::engine::system::vulkan::desc::binding_201_world_2d_view::World2dView;
 use crate::engine::system::vulkan::desc::WriteDescriptorSetOrigin;
-use crate::engine::system::vulkan::textures::ImageSystem;
+use crate::engine::system::vulkan::textures::{CopyInfo, ImageSystem};
 use crate::engine::system::vulkan::utils::pipeline::single_pass_render_pass_from_image_format;
 use crate::engine::system::vulkan::wds::WriteDescriptorSetManager;
 use crate::engine::system::vulkan::{DrawError, Error};
 use std::borrow::Borrow;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use vulkano::command_buffer::allocator::{
-    StandardCommandBufferAllocator, StandardCommandBufferAllocatorCreateInfo,
+    CommandBufferAllocator, StandardCommandBufferAllocator,
+    StandardCommandBufferAllocatorCreateInfo,
 };
 use vulkano::command_buffer::{
     AutoCommandBufferBuilder, CommandBufferInheritanceInfo, CommandBufferInheritanceRenderPassInfo,
@@ -42,7 +43,8 @@ use vulkano::{Validated, Version, VulkanError};
 
 pub struct VulkanSystem {
     device: Arc<Device>,
-    queue: Arc<Queue>,
+    render_queue: Arc<Queue>,
+    transfer_queue: Option<Arc<Queue>>,
     render_pass: Arc<RenderPass>,
     swapchain: Arc<Swapchain>,
     swapchain_images: Vec<Arc<Image>>,
@@ -72,8 +74,10 @@ impl VulkanSystem {
             ..DeviceExtensions::empty()
         };
 
-        let (physical_device, queue_family_index) =
+        let (physical_device, index_graphics_queue, index_transfer_queue) =
             choose_physical_device(&surface, &mut device_extensions)?;
+
+        info!("Graphics Queue: {index_graphics_queue:?}, Transfer Queue: {index_transfer_queue:?}");
 
         let (device, mut queues) = Device::new(
             physical_device,
@@ -83,11 +87,17 @@ impl VulkanSystem {
                     dynamic_rendering: true,
                     ..DeviceFeatures::empty()
                 } | features,
-                queue_create_infos: vec![QueueCreateInfo {
-                    queue_family_index,
-
-                    ..Default::default()
-                }],
+                queue_create_infos: [Some(index_graphics_queue), index_transfer_queue]
+                    .into_iter()
+                    .flatten()
+                    .enumerate()
+                    .map(|(index, queue_family_index)| QueueCreateInfo {
+                        queue_family_index,
+                        // the first queue (which is the render queue) gets the highest priority
+                        queues: if index == 0 { vec![1.0] } else { vec![0.0] },
+                        ..Default::default()
+                    })
+                    .collect(),
                 ..Default::default()
             },
         )
@@ -118,7 +128,13 @@ impl VulkanSystem {
                     ..StandardCommandBufferAllocatorCreateInfo::default()
                 },
             )),
-            queue: queues.next().expect("Promised queue is not present"),
+            render_queue: queues.next().expect("Promised queue is not present"),
+            transfer_queue: queues.next().inspect(|queue| {
+                info!(
+                    "Found dedicated transfer queue: {}",
+                    queue.queue_family_index()
+                );
+            }),
             recreate_swapchain: false,
             swapchain_is_new: false,
             previous_frame_end: Some(vulkano::sync::now(Arc::clone(&device)).boxed()),
@@ -144,12 +160,91 @@ impl VulkanSystem {
             basic_buffers_manager,
             samples,
         }
-        .with_write_descriptors_initialized()
+        .with_write_descriptors_initialized()?
+        .spawn_transfer_thread()
     }
 
     #[inline]
     fn with_write_descriptors_initialized(mut self) -> Result<Self, Error> {
         self.init_write_descriptors()?;
+        Ok(self)
+    }
+
+    fn spawn_transfer_thread(self) -> Result<Self, Error> {
+        let use_queue = Arc::clone(
+            self.transfer_queue
+                .as_ref()
+                .unwrap_or_else(|| &self.render_queue),
+        );
+        info!(
+            "Using for transfer Queue: {} (Render Queue: {})",
+            use_queue.queue_family_index(),
+            self.render_queue.queue_family_index()
+        );
+
+        let device = Arc::clone(&self.device);
+        let queue = Arc::clone(&self.render_queue);
+        let allocator = Arc::clone(&self.cmd_allocator) as Arc<dyn CommandBufferAllocator>;
+        let image_system = Arc::clone(&self.image_system);
+
+        let _ = std::thread::Builder::new()
+            .name("Transfer Thread".to_string())
+            .spawn(move || loop {
+                let started = Instant::now();
+                let mut requests = Vec::with_capacity(2);
+
+                while requests.len() < requests.capacity()
+                    && started.elapsed() < Duration::from_millis(100)
+                {
+                    while let Some(upload_request) =
+                        image_system.wait_for_next_upload_info(Duration::from_millis(10))
+                    {
+                        requests.push(upload_request);
+                    }
+                }
+
+                if requests.is_empty() {
+                    continue;
+                } else {
+                    info!("Handling {} requests...", requests.len());
+                }
+
+                let mut buffer = AutoCommandBufferBuilder::primary(
+                    Arc::clone(&allocator),
+                    queue.queue_family_index(),
+                    CommandBufferUsage::OneTimeSubmit,
+                )
+                .unwrap();
+
+                let waiters = requests
+                    .into_iter()
+                    .map(|request| {
+                        let copy_info = match request.info {
+                            CopyInfo::Deferred(eval) => eval(&image_system).unwrap(),
+                            CopyInfo::Immediate(copy_info) => copy_info,
+                        };
+                        if let Err(e) = buffer.copy_buffer_to_image(copy_info) {
+                            error!("Failed to enqueue copy_buffer_to_image-cmd: {e}");
+                        }
+                        request.response
+                    })
+                    .collect::<Vec<_>>();
+
+                let commands = buffer.build().unwrap();
+                let future = vulkano::sync::now(Arc::clone(&device))
+                    .then_execute(Arc::clone(&queue), commands)
+                    .unwrap()
+                    .then_signal_fence_and_flush()
+                    .unwrap();
+
+                info!("Waiting for completion");
+                future.wait(None).unwrap();
+
+                for waiter in waiters {
+                    waiter.notify_completion();
+                }
+            });
+
         Ok(self)
     }
 
@@ -184,7 +279,7 @@ impl VulkanSystem {
 
     #[inline]
     pub fn queue(&self) -> &Arc<Queue> {
-        &self.queue
+        &self.render_queue
     }
 
     #[inline]
@@ -290,13 +385,17 @@ impl VulkanSystem {
 
         let mut primary = AutoCommandBufferBuilder::primary(
             Arc::clone(&self.cmd_allocator) as Arc<_>,
-            self.queue.queue_family_index(),
+            self.render_queue.queue_family_index(),
             CommandBufferUsage::OneTimeSubmit,
         )
         .unwrap();
 
         let context = RenderContext {
-            queue_family_index: self.queue.queue_family_index(),
+            render_queue_family_index: self.render_queue.queue_family_index(),
+            transfer_queue_family_index: self
+                .transfer_queue
+                .as_ref()
+                .map(|q| q.queue_family_index()),
             renderpass: &self.render_pass,
             swapchain_framebuffer: &self.swapchain_framebuffers[swapchain_image_index as usize],
             command_buffer_allocator: &self.cmd_allocator,
@@ -328,27 +427,6 @@ impl VulkanSystem {
         }
 
         let callback_commands = render_callback(&context);
-
-        // collect all enqueued requests from other systems and insert it before the commands of
-        // the callback.
-        // TODO might need to extend to more systems in the future
-        if self.image_system.has_upload_info_enqueued() {
-            let mut buffer = context
-                .create_preparation_buffer_builder()
-                .expect("Failed to create preparation command buffer system updates");
-
-            while let Some(upload_request) = self.image_system.next_upload_info() {
-                if let Err(e) = buffer.copy_buffer_to_image(upload_request) {
-                    error!("Failed to enqueue copy_buffer_to_image-cmd: {e}");
-                }
-            }
-
-            prepare_commands.push(
-                buffer.build().expect(
-                    "Failed to build command buffer for preparation commands of sub-systems",
-                ),
-            )
-        }
 
         for command in callback_commands {
             if command.inheritance_info().render_pass.is_none() {
@@ -403,21 +481,23 @@ impl VulkanSystem {
             .build()
             .map_err(DrawError::FailedToBuildCommandBuffer)?;
 
-        let future = self
-            .previous_frame_end
-            .take()
-            .unwrap_or_else(|| vulkano::sync::now(Arc::clone(&self.device)).boxed())
-            .join(acquire_future)
-            .then_execute(Arc::clone(&self.queue), command_buffer)
-            .unwrap()
-            .then_swapchain_present(
-                Arc::clone(&self.queue),
-                SwapchainPresentInfo::swapchain_image_index(
-                    Arc::clone(&self.swapchain),
-                    swapchain_image_index,
-                ),
-            )
-            .then_signal_fence_and_flush();
+        let future = match self.previous_frame_end.take() {
+            None => vulkano::sync::now(Arc::clone(&self.device)).boxed(),
+            Some(prev) => prev
+                .join(vulkano::sync::now(Arc::clone(&self.device)))
+                .boxed(),
+        }
+        .join(acquire_future)
+        .then_execute(Arc::clone(&self.render_queue), command_buffer)
+        .unwrap()
+        .then_swapchain_present(
+            Arc::clone(&self.render_queue),
+            SwapchainPresentInfo::swapchain_image_index(
+                Arc::clone(&self.swapchain),
+                swapchain_image_index,
+            ),
+        )
+        .then_signal_fence_and_flush();
 
         match future {
             Ok(future) => {
@@ -442,7 +522,7 @@ impl VulkanSystem {
 fn choose_physical_device(
     surface: &Surface,
     device_extensions: &mut DeviceExtensions,
-) -> Result<(Arc<PhysicalDevice>, u32), Error> {
+) -> Result<(Arc<PhysicalDevice>, u32, Option<u32>), Error> {
     surface
         .instance()
         .enumerate_physical_devices()
@@ -475,17 +555,30 @@ fn choose_physical_device(
             satisfies_req_device_extensions
         })
         .filter_map(|p| {
-            p.queue_family_properties()
-                .iter()
-                .enumerate()
-                .position(|(i, q)| {
-                    info!("Queue({i}) = {q:?}");
-                    q.queue_flags.contains(QueueFlags::GRAPHICS)
-                        && p.surface_support(i as u32, &surface).unwrap_or(false)
-                })
-                .map(|i| (p, i as u32))
+            let index_graphics_queue =
+                p.queue_family_properties()
+                    .iter()
+                    .enumerate()
+                    .position(|(i, q)| {
+                        info!("Queue({i}) = {q:?}");
+                        q.queue_flags.contains(QueueFlags::GRAPHICS)
+                            && p.surface_support(i as u32, &surface).unwrap_or(false)
+                    })
+                    .map(|index| index as u32)?;
+
+            let index_transfer_queue =
+                p.queue_family_properties()
+                    .iter()
+                    .enumerate()
+                    .position(|(i, q)| {
+                        info!("Queue({i}) = {q:?}");
+                        q.queue_flags.contains(QueueFlags::TRANSFER) && i as u32 != index_graphics_queue
+                    })
+                    .map(|index| index as u32);
+
+            Some((p, index_graphics_queue, index_transfer_queue))
         })
-        .min_by_key(|(p, _)| match p.properties().device_type {
+        .min_by_key(|(p, ..)| match p.properties().device_type {
             PhysicalDeviceType::DiscreteGpu => 0,
             PhysicalDeviceType::IntegratedGpu => 1,
             PhysicalDeviceType::VirtualGpu => 2,
@@ -493,9 +586,9 @@ fn choose_physical_device(
             PhysicalDeviceType::Other => 4,
             _ => 5,
         })
-        .map(|(p, i)| {
+        .map(|(p, index_graphics_queue, index_transfer_queue)| {
             info!(
-                "Chosen physical device {} and with queue family index {i} and v{:?}",
+                "Chosen physical device {} and with queue family index {index_graphics_queue} and v{:?}",
                 p.properties().device_name,
                 p.api_version()
             );
@@ -505,7 +598,7 @@ fn choose_physical_device(
             device_extensions.khr_dynamic_rendering = true;
             // }
 
-            (p, i)
+            (p, index_graphics_queue, index_transfer_queue)
         })
         .ok_or(Error::NoSatisfyingPhysicalDevicePresent)
 }
@@ -607,7 +700,9 @@ fn create_framebuffers(
 }
 
 pub struct RenderContext<'a> {
-    queue_family_index: u32,
+    render_queue_family_index: u32,
+    #[allow(unused)]
+    transfer_queue_family_index: Option<u32>,
     renderpass: &'a Arc<RenderPass>,
     swapchain_framebuffer: &'a Arc<Framebuffer>,
     command_buffer_allocator: &'a Arc<StandardCommandBufferAllocator>,
@@ -621,7 +716,7 @@ impl<'a> RenderContext<'a> {
     ) -> Result<AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, Error> {
         AutoCommandBufferBuilder::secondary(
             Arc::clone(self.command_buffer_allocator) as Arc<_>,
-            self.queue_family_index,
+            self.render_queue_family_index,
             CommandBufferUsage::OneTimeSubmit,
             CommandBufferInheritanceInfo {
                 render_pass: None,
@@ -638,7 +733,7 @@ impl<'a> RenderContext<'a> {
     ) -> Result<AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>, Error> {
         let mut secondary = AutoCommandBufferBuilder::secondary(
             Arc::clone(self.command_buffer_allocator) as Arc<_>,
-            self.queue_family_index,
+            self.render_queue_family_index,
             CommandBufferUsage::OneTimeSubmit,
             CommandBufferInheritanceInfo {
                 render_pass: Some(CommandBufferInheritanceRenderPassType::BeginRenderPass(

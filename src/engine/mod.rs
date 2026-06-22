@@ -314,13 +314,21 @@ impl<'a> BeforeRenderContext<'a> {
                 let mut commands = Vec::default();
 
                 #[cfg(feature = "ui-egui")]
-                if let Err(e) = self
-                    .engine
-                    .vulkan_pipelines
-                    .egui
-                    .prepare(&self.engine.egui_system)
-                {
-                    error!("Failed to prepare rendering for egui: {e}");
+                match render_context.create_preparation_buffer_builder() {
+                    Ok(mut preparation_buffer) => {
+                        if let Err(e) = self
+                            .engine
+                            .vulkan_pipelines
+                            .egui
+                            .prepare(&self.engine.egui_system, &mut preparation_buffer)
+                        {
+                            error!("Failed to prepare rendering for egui: {e}");
+                        }
+                        commands.push(preparation_buffer.build().unwrap());
+                    }
+                    Err(e) => {
+                        error!("Failed to provide preparation buffer to egui: {e}");
+                    }
                 }
 
                 commands.extend(f1(RenderContext {
@@ -340,18 +348,22 @@ impl<'a> BeforeRenderContext<'a> {
                 }));
 
                 #[cfg(feature = "ui-egui")]
-                {
-                    let mut builder = render_context.create_render_buffer_builder().unwrap();
-                    if let Err(e) = self
-                        .engine
-                        .vulkan_pipelines
-                        .egui
-                        .draw(&mut builder, &self.engine.egui_system)
-                    {
-                        error!("Failed to render egui: {e}");
-                    }
+                match render_context.create_render_buffer_builder() {
+                    Ok(mut render_buffer) => {
+                        if let Err(e) = self
+                            .engine
+                            .vulkan_pipelines
+                            .egui
+                            .draw(&mut render_buffer, &self.engine.egui_system)
+                        {
+                            error!("Failed to render egui: {e}");
+                        }
 
-                    commands.push(builder.build().unwrap());
+                        commands.push(render_buffer.build().unwrap());
+                    }
+                    Err(e) => {
+                        warn!("Failed to provide render buffer to egui: {e}");
+                    }
                 }
 
                 commands

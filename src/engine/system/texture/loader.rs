@@ -1,5 +1,5 @@
 use crate::engine::system::texture::Texture;
-use crate::engine::system::vulkan::textures::ImageSystem;
+use crate::engine::system::vulkan::textures::{CopyRequestWaiter, ImageSystem};
 use crate::engine::system::vulkan::UploadError;
 use std::sync::Arc;
 use vulkano::image::Image;
@@ -10,7 +10,7 @@ pub trait TextureLoaderExt {
     fn load_texture_from_raw_image<'a, R: 'a + std::io::BufRead + std::io::Seek>(
         &self,
         bin: R,
-    ) -> Result<Texture, Error>;
+    ) -> Result<(Texture, CopyRequestWaiter), Error>;
 }
 
 impl TextureLoaderExt for &ImageSystem {
@@ -19,7 +19,7 @@ impl TextureLoaderExt for &ImageSystem {
     fn load_texture_from_raw_image<'a, R: 'a + std::io::BufRead + std::io::Seek>(
         &self,
         bin: R,
-    ) -> Result<Texture, Error> {
+    ) -> Result<(Texture, CopyRequestWaiter), Error> {
         TextureLoader::load_from_binary(self, bin)
     }
 }
@@ -31,10 +31,10 @@ impl TextureLoader {
     pub fn load_from_binary<'a, R: 'a + std::io::BufRead + std::io::Seek>(
         image_system: &ImageSystem,
         bin: R,
-    ) -> Result<Texture, Error> {
+    ) -> Result<(Texture, CopyRequestWaiter), Error> {
         use image::GenericImageView;
         let mem_image = Self::read_image(bin)?;
-        let gpu_image = Self::upload_image(
+        let (gpu_image, waiter) = Self::upload_image(
             image_system,
             mem_image
                 .pixels()
@@ -44,12 +44,15 @@ impl TextureLoader {
             mem_image.height(),
         )?;
 
-        Ok(Texture {
-            vulkan_image: gpu_image,
-            memory_image: mem_image,
-            egui_texture: None,
-            texture_ids: vec![],
-        })
+        Ok((
+            Texture {
+                vulkan_image: gpu_image,
+                memory_image: mem_image,
+                egui_texture: None,
+                texture_ids: vec![],
+            },
+            waiter,
+        ))
     }
 
     #[cfg(feature = "image")]
@@ -68,7 +71,7 @@ impl TextureLoader {
         rgba: Vec<u8>,
         width: u32,
         height: u32,
-    ) -> Result<Arc<Image>, Error> {
+    ) -> Result<(Arc<Image>, CopyRequestWaiter), Error> {
         Ok(image_system
             .create_image_and_enqueue_upload(rgba, width, height)
             .map_err(Error::FailedToUpload)?)

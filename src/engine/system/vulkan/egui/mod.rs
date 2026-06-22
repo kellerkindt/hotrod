@@ -2,7 +2,7 @@ use crate::engine::system::egui::EguiSystem;
 use crate::engine::system::vulkan::buffers::BasicBuffersManager;
 use crate::engine::system::vulkan::system::{GraphicsPipelineRenderPassInfo, VulkanSystem};
 use crate::engine::system::vulkan::textures::{
-    ImageSamplerMode, ImageSystem, TextureId, TextureManager,
+    CopyInfo, CopyRequestWaiter, ImageSamplerMode, ImageSystem, TextureId, TextureManager,
 };
 use crate::engine::system::vulkan::utils::Draw;
 use crate::engine::system::vulkan::{DrawError, PipelineCreateError, ShaderLoadError, UploadError};
@@ -41,11 +41,15 @@ use vulkano::{Validated, VulkanError};
 
 type TextureSamplers = HashMap<TextureOptions, Arc<Sampler>>;
 
+struct TextureState {
+    id: TextureId<EguiPipeline>,
+    image: Arc<Image>,
+    waiter: Option<CopyRequestWaiter>,
+}
+
 struct Inner {
-    pub textures:
-        HashMap<IdWrapper, TextureId<EguiPipeline>, BuildHasherDefault<NoHashHasher<u64>>>,
+    pub textures: HashMap<IdWrapper, TextureState, BuildHasherDefault<NoHashHasher<u64>>>,
     pub textures_to_free: Vec<EguiTextureId>,
-    pub images: HashMap<IdWrapper, Arc<Image>, BuildHasherDefault<NoHashHasher<u64>>>,
     pub texture_samplers: TextureSamplers,
 }
 
@@ -55,7 +59,7 @@ pub struct EguiPipeline {
     buffers_manager: Arc<BasicBuffersManager>,
     image_system: Arc<ImageSystem>,
     texture_manager: TextureManager<Self, 0>,
-    inner: RwLock<Inner>,
+    inner: Arc<RwLock<Inner>>,
     device: Arc<Device>,
 }
 
@@ -88,10 +92,9 @@ impl EguiPipeline {
             TextureManager::basic(Arc::clone(&device), &pipeline, ImageSamplerMode::Linear)?;
         Ok(Self {
             queue,
-            inner: RwLock::new(Inner {
+            inner: Arc::new(RwLock::new(Inner {
                 textures: HashMap::default(),
                 textures_to_free: Vec::default(),
-                images: HashMap::default(),
                 texture_samplers: [(
                     TextureOptions {
                         magnification: TextureFilter::Linear,
@@ -103,7 +106,7 @@ impl EguiPipeline {
                 )]
                 .into_iter()
                 .collect::<HashMap<_, _>>(),
-            }),
+            })),
             device,
             buffers_manager,
             image_system,
@@ -210,8 +213,12 @@ impl EguiPipeline {
     }
 
     #[inline]
-    pub fn prepare(&self, egui: &EguiSystem) -> Result<(), UploadError> {
-        self.update_textures(&egui.texture_delta)
+    pub fn prepare<P>(
+        &self,
+        egui: &EguiSystem,
+        high_priority_commands: &mut AutoCommandBufferBuilder<P>,
+    ) -> Result<(), UploadError> {
+        self.update_textures(&egui.texture_delta, high_priority_commands)
     }
 
     #[inline]
@@ -272,12 +279,23 @@ impl EguiPipeline {
                 [points_view_area.width(), points_view_area.height()],
             )?;
 
-        let inner = self.inner.read().unwrap();
+        let mut inner = self.inner.write().unwrap();
         for (index, rect) in clip_rects.into_iter().enumerate() {
             let (offset_vertex, offset_index) = offsets[index];
             let (_offset_vertex_end, offset_index_end) = offsets[index + 1];
 
-            if let Some(texture) = inner.textures.get(&IdWrapper::from(texture_ids[index])) {
+            let texture_id = IdWrapper::from(texture_ids[index]);
+            if let Some(texture) = inner.textures.get_mut(&texture_id) {
+                if let Some(waiter) = &texture.waiter {
+                    if waiter.is_complete() {
+                        // no need to check again
+                        texture.waiter = None;
+                    } else {
+                        // can't use it for now
+                        continue;
+                    }
+                };
+
                 builder
                     .set_scissor(
                         0,
@@ -298,7 +316,7 @@ impl EguiPipeline {
                         PipelineBindPoint::Graphics,
                         Arc::clone(&self.pipeline.layout()),
                         0,
-                        Arc::clone(texture.descriptor()),
+                        Arc::clone(texture.id.descriptor()),
                     )?
                     .hotrod_draw_indexed(
                         (offset_index_end - offset_index) as u32,
@@ -320,31 +338,55 @@ impl EguiPipeline {
         let inner = inner.deref_mut();
         for texture in inner.textures_to_free.drain(..).map(IdWrapper::from) {
             inner.textures.remove(&texture);
-            inner.images.remove(&texture);
         }
     }
 
-    fn update_textures(&self, textures_delta: &TexturesDelta) -> Result<(), UploadError> {
+    /// To prevent flickering, some texture updates that must be executed before the next draw call.
+    fn update_textures<P>(
+        &self,
+        textures_delta: &TexturesDelta,
+        high_priority_commands: &mut AutoCommandBufferBuilder<P>,
+    ) -> Result<(), UploadError> {
         let mut inner = self.inner.write().unwrap();
 
         inner
             .textures_to_free
             .extend(textures_delta.free.iter().copied());
 
-        for (texture_id, delta) in &textures_delta.set {
-            let texture_id = IdWrapper::from(*texture_id);
-            let image = if delta.is_whole() {
+        // this clone is cheap (just a few bytes, the image is inside an Arc)
+        for (texture_id, delta) in textures_delta.set.iter().cloned() {
+            // the egui default texture is high priority, everything else can wait a frame if needed
+            let high_priority_commands = Some(&mut *high_priority_commands)
+                .filter(|_| texture_id == egui::TextureId::default());
+            let texture_id = IdWrapper::from(texture_id);
+
+            if delta.is_whole() {
                 let image = self.create_image(&delta.image)?;
-                let texture = self.prepare_texture(&mut inner.texture_samplers, delta, &image)?;
+                let texture = self.prepare_texture(&mut inner.texture_samplers, &delta, &image)?;
 
-                inner.textures.insert(texture_id, texture);
-                inner.images.insert(texture_id, Arc::clone(&image));
-                image
+                inner.textures.insert(
+                    texture_id,
+                    TextureState {
+                        id: texture,
+                        image: Arc::clone(&image),
+                        waiter: Self::enqueue_image_upload_or_delta_update::<P>(
+                            &self.image_system,
+                            image,
+                            delta,
+                            high_priority_commands,
+                        )?,
+                    },
+                );
             } else {
-                Arc::clone(&inner.images[&texture_id])
-            };
-
-            self.enqueue_image_upload_or_delta_update(image, delta)?;
+                if let Some(state) = inner.textures.get_mut(&texture_id) {
+                    state.waiter = Self::enqueue_image_upload_or_delta_update::<P>(
+                        &self.image_system,
+                        Arc::clone(&state.image),
+                        delta,
+                        high_priority_commands,
+                    )?;
+                }
+            }
         }
 
         Ok(())
@@ -380,29 +422,39 @@ impl EguiPipeline {
     }
 
     #[inline]
-    fn enqueue_image_upload_or_delta_update(
-        &self,
+    fn enqueue_image_upload_or_delta_update<P>(
+        image_system: &ImageSystem,
         image: Arc<Image>,
-        delta: &ImageDelta,
-    ) -> Result<(), Validated<AllocateBufferError>> {
-        self.image_system.enqueue_image_update(
-            image,
-            delta.pos.map(|[x, y]| {
-                (
-                    [x as u32, y as u32],
-                    [delta.image.width() as u32, delta.image.height() as u32],
-                )
-            }),
-            match &delta.image {
-                ImageData::Color(color_data) => color_data
-                    .pixels
-                    .iter()
-                    .flat_map(Color32::to_array)
-                    .collect::<Vec<_>>(),
-            },
-        )?;
+        delta: ImageDelta,
+        high_priority_commands: Option<&mut AutoCommandBufferBuilder<P>>,
+    ) -> Result<Option<CopyRequestWaiter>, Validated<AllocateBufferError>> {
+        let request = move |image_system: &ImageSystem| {
+            image_system.create_copy_request(
+                image,
+                delta.pos.map(|[x, y]| {
+                    (
+                        [x as u32, y as u32],
+                        [delta.image.width() as u32, delta.image.height() as u32],
+                    )
+                }),
+                match &delta.image {
+                    ImageData::Color(color_data) => color_data
+                        .pixels
+                        .iter()
+                        .flat_map(Color32::to_array)
+                        .collect::<Vec<_>>(),
+                },
+            )
+        };
 
-        Ok(())
+        if let Some(high_priority_commands) = high_priority_commands {
+            high_priority_commands.copy_buffer_to_image(request(image_system)?)?;
+            Ok(None)
+        } else {
+            Ok(Some(image_system.enqueue_copy_request(CopyInfo::Deferred(
+                Box::new(request),
+            ))))
+        }
     }
 }
 
