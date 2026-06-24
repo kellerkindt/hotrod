@@ -289,6 +289,7 @@ impl EguiPipeline {
                 if let Some(waiter) = &texture.waiter {
                     if waiter.is_complete() {
                         // no need to check again
+                        info!("EGUI AWAITED");
                         texture.waiter = None;
                     } else {
                         // can't use it for now
@@ -428,6 +429,24 @@ impl EguiPipeline {
         delta: ImageDelta,
         high_priority_commands: Option<&mut AutoCommandBufferBuilder<P>>,
     ) -> Result<Option<CopyRequestWaiter>, Validated<AllocateBufferError>> {
+        let estimated_size = {
+            let pixels = delta
+                .pos
+                .map(|[x, y]| {
+                    let widht = delta.image.width().saturating_sub(x);
+                    let height = delta.image.height().saturating_sub(y);
+
+                    widht * height
+                })
+                .unwrap_or_else(|| match &delta.image {
+                    ImageData::Color(color_data) => {
+                        let [width, height] = color_data.size;
+                        width * height
+                    }
+                });
+            pixels * 4 // RGBA / Color32
+        };
+
         let request = move |image_system: &ImageSystem| {
             image_system.create_copy_request(
                 image,
@@ -451,9 +470,10 @@ impl EguiPipeline {
             high_priority_commands.copy_buffer_to_image(request(image_system)?)?;
             Ok(None)
         } else {
-            Ok(Some(image_system.enqueue_copy_request(CopyInfo::Deferred(
-                Box::new(request),
-            ))))
+            Ok(Some(image_system.enqueue_copy_request(
+                CopyInfo::Deferred(Box::new(request)),
+                estimated_size,
+            )))
         }
     }
 }

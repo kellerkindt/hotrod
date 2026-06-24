@@ -39,6 +39,11 @@ impl ImageSystem {
     /// Retrieves enqueued [`CopyBufferToImageInfo`]-requests. Waits until one is available.
     pub(crate) fn wait_for_next_upload_info(&self, duration: Duration) -> Option<CopyRequest> {
         let until = Instant::now() + duration;
+        self.wait_for_next_upload_info_until(until)
+    }
+
+    /// Retrieves enqueued [`CopyBufferToImageInfo`]-requests. Waits until one is available.
+    pub(crate) fn wait_for_next_upload_info_until(&self, until: Instant) -> Option<CopyRequest> {
         let mut now = Instant::now();
         let mut guard = self.upload_queue_mutex.lock().unwrap();
         while now < until {
@@ -108,9 +113,12 @@ impl ImageSystem {
         I: IntoIterator<Item = u8>,
         I::IntoIter: ExactSizeIterator,
     {
-        Ok(self.enqueue_copy_request(CopyInfo::Immediate(
-            self.create_copy_buffer_to_image_image(image, rgba)?,
-        )))
+        let rgba = rgba.into_iter();
+        let estimated_bytes = rgba.len() * 4; // RGBA / Color32
+        Ok(self.enqueue_copy_request(
+            CopyInfo::Immediate(self.create_copy_buffer_to_image_image(image, rgba)?),
+            estimated_bytes,
+        ))
     }
 
     fn create_copy_buffer_to_image_image<I>(
@@ -150,8 +158,10 @@ impl ImageSystem {
         I: IntoIterator<Item = u8>,
         I::IntoIter: ExactSizeIterator,
     {
+        let rgba = rgba.into_iter();
+        let estimated_bytes = rgba.len() * 4; // RGBA / Color32
         let info = self.create_copy_request(image, region, rgba)?;
-        Ok(self.enqueue_copy_request(CopyInfo::Immediate(info)))
+        Ok(self.enqueue_copy_request(CopyInfo::Immediate(info), estimated_bytes))
     }
 
     pub fn create_copy_request<I>(
@@ -176,13 +186,18 @@ impl ImageSystem {
         Ok(copy_info)
     }
 
-    pub fn enqueue_copy_request(&self, info: CopyInfo) -> CopyRequestWaiter {
+    pub fn enqueue_copy_request(
+        &self,
+        info: CopyInfo,
+        estimated_bytes: usize,
+    ) -> CopyRequestWaiter {
         let condvar = Arc::new((Condvar::new(), Mutex::new(false)));
         self.upload_queue.push(CopyRequest {
             info,
             response: CopyRequestNotifier {
                 condvar: Arc::clone(&condvar),
             },
+            estimated_bytes,
         });
         self.upload_queue_condvar.notify_all();
         CopyRequestWaiter { condvar }
@@ -207,6 +222,7 @@ pub enum CopyInfo {
 pub(crate) struct CopyRequest {
     pub info: CopyInfo,
     pub response: CopyRequestNotifier,
+    pub estimated_bytes: usize,
 }
 
 pub(crate) struct CopyRequestNotifier {
@@ -215,6 +231,7 @@ pub(crate) struct CopyRequestNotifier {
 
 impl CopyRequestNotifier {
     pub fn notify_completion(self) {
+        info!("Notifying completion");
         let mut guard = self.condvar.1.lock().unwrap();
         *guard = true;
         self.condvar.0.notify_all();
@@ -236,5 +253,6 @@ impl CopyRequestWaiter {
         while !*guard {
             guard = self.condvar.0.wait(guard).unwrap();
         }
+        info!("Completion awaited")
     }
 }
