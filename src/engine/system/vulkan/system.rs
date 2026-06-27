@@ -215,16 +215,17 @@ impl VulkanSystem {
                     let mut stash = None;
 
                     loop {
+                        let max_wait = if requests.is_empty() { MAX_WAIT_IDLE } else { MAX_WAIT_BUSY };
                         let (started, mut bytes) = stash.unwrap_or_else(|| (Instant::now(), 0));
                         let mut skip = 0;
 
 
                         'outer: while requests.len() < MAX_REQUESTS
-                            && started.elapsed() < if requests.is_empty() {  MAX_WAIT_IDLE } else { MAX_WAIT_BUSY }
+                            && started.elapsed() < max_wait
                             && bytes < MAX_BYTES
                         {
                             while let Some(upload_request) =
-                                image_system.wait_for_next_upload_info_until(started + if requests.is_empty() {  MAX_WAIT_IDLE } else { MAX_WAIT_BUSY })
+                                image_system.wait_for_next_upload_info_until(started + max_wait)
                             {
                                 let estimated_bytes = upload_request.estimated_bytes;
                                 let required_before_render = upload_request.required_before_render;
