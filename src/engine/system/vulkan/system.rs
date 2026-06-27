@@ -204,16 +204,18 @@ impl VulkanSystem {
                         queue.queue_family_index(),
                     );
 
-                    let mut stash = Option::<Vec<_>>::None;
+                    const MAX_BYTES: usize = 1024 * 1024 * 32;
+                    const MAX_REQUESTS: usize = 1024;
+                    const MAX_WAIT: Duration = Duration::from_secs(10);
+
+                    let mut requests = Vec::with_capacity(MAX_REQUESTS);
+                    let mut waiters = Vec::with_capacity(MAX_REQUESTS);
 
                     loop {
-                        const MAX_BYTES: usize = 1024 * 1024 * 32;
-                        const MAX_REQUESTS: usize = 1024;
-                        const MAX_WAIT: Duration = Duration::from_millis(10);
 
                         let started = Instant::now();
                         let mut bytes = 0;
-                        let mut requests = stash.take().unwrap_or_else(|| Vec::with_capacity(MAX_REQUESTS));
+                        let mut skip = 0;
 
 
                         'outer: while requests.len() < MAX_REQUESTS
@@ -228,7 +230,7 @@ impl VulkanSystem {
                                 bytes += estimated_bytes;
 
                                 if required_before_render {
-                                    stash = Some(core::mem::take(&mut requests));
+                                    skip = requests.len();
                                     requests.push(upload_request);
                                     break 'outer;
                                 } else {
@@ -254,20 +256,33 @@ impl VulkanSystem {
                         )
                             .unwrap();
 
-                        let waiters = requests
-                            .into_iter()
-                            .map(|request| {
-                                let copy_info = match request.info {
-                                    CopyInfo::Deferred(eval) => eval(&image_system).unwrap(),
-                                    CopyInfo::Immediate(copy_info) => copy_info,
-                                };
-                                if let Err(e) = buffer.copy_buffer_to_image(copy_info) {
-                                    error!("Failed to enqueue copy_buffer_to_image-cmd: {e}");
-                                }
-                                request.response
-                            })
-                            .collect::<Vec<_>>();
+                        for request in requests.drain(skip..) {
+                            let copy_info = match request.info {
+                                CopyInfo::Deferred(eval) => {
+                                    match eval(&image_system) {
+                                        Ok(copy_info) =>copy_info,
+                                        Err(e) => {
+                                            error!("Failed to eval CopyInfo: {e:?}");
+                                            continue;
+                                        }
+                                    }
+                                },
+                                CopyInfo::Immediate(copy_info) => copy_info,
+                            };
+                            if let Err(e) = buffer.copy_buffer_to_image(copy_info) {
+                                error!("Failed to enqueue copy_buffer_to_image-cmd: {e}");
+                            } else {
+                                waiters.push(request.response);
+                            }
+                        }
 
+                        // No successful copy request?
+                        if waiters.is_empty() {
+                            continue;
+                        }
+
+
+                        debug!("Submitting upload requests");
                         let commands = buffer.build().unwrap();
                         let future = vulkano::sync::now(Arc::clone(&device))
                             .then_execute(Arc::clone(&queue), commands)
@@ -278,9 +293,12 @@ impl VulkanSystem {
                         debug!("Awaiting upload completion");
                         future.wait(None).unwrap();
 
-                        for waiter in waiters {
+                        debug!("Notifying upload waiters...");
+                        for waiter in waiters.drain(..) {
                             waiter.notify_completion();
                         }
+
+                        debug!("Notifying upload waiters... DONE");
                     }
                 });
         }
