@@ -11,8 +11,9 @@ use std::borrow::Cow;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::sync::Arc;
+use vulkano::image::Image;
 
-type CacheUpdate = ([u8; 4], u16, String, Vec<u8>, u32, u32);
+type CacheUpdate = ([u8; 4], u16, String, Arc<Image>, u32, u32);
 
 pub struct FontRenderer {
     dummy_image: Option<TextureId<TexturedPipeline>>,
@@ -27,9 +28,9 @@ impl FontRenderer {
     const DUMMY_TEXTURE_RGBA: [u8; 4] = [0, 0, 0, 0];
     const DEFAULT_LAST_USED_COUNTER: u8 = 0;
 
-    pub fn new(ttf: Cow<'static, [u8]>) -> Self {
+    pub fn new(ttf: Cow<'static, [u8]>, image_system: Arc<ImageSystem>) -> Self {
         let update_queue = Arc::default();
-        let sender = FontRendererThread::spawn(ttf, Arc::clone(&update_queue));
+        let sender = FontRendererThread::spawn(ttf, Arc::clone(&update_queue), image_system);
 
         Self {
             dummy_image: None,
@@ -65,7 +66,7 @@ impl FontRenderer {
         x: f32,
         y: f32,
     ) -> Textured {
-        self.retrieve_threaded_updates(textured_pipeline, image_system);
+        self.retrieve_threaded_updates(textured_pipeline);
 
         let (texture, w, h) = match self.cache.entry((color, size, text.to_string())) {
             // Fine, it already exists, just reset the counter
@@ -143,11 +144,12 @@ impl FontRenderer {
         image_system: &ImageSystem,
     ) -> TextureId<TexturedPipeline> {
         dummy_image.clone().unwrap_or_else(|| {
-            let image = image_system
+            let (image, _) = image_system
                 .create_image_and_enqueue_upload(
                     Self::DUMMY_TEXTURE_RGBA,
                     Self::DUMMY_TEXTURE_WIDTH,
                     Self::DUMMY_TEXTURE_HEIGHT,
+                    true,
                 )
                 .unwrap();
 
@@ -158,15 +160,8 @@ impl FontRenderer {
         })
     }
 
-    fn retrieve_threaded_updates(
-        &mut self,
-        textured_pipeline: &TexturedPipeline,
-        image_system: &ImageSystem,
-    ) {
-        while let Some((color, size, text, image_data, w, h)) = self.update_queue.pop() {
-            let image = image_system
-                .create_image_and_enqueue_upload(image_data, w, h)
-                .unwrap();
+    fn retrieve_threaded_updates(&mut self, textured_pipeline: &TexturedPipeline) {
+        while let Some((color, size, text, image, w, h)) = self.update_queue.pop() {
             let texture = textured_pipeline.prepare_texture(image).unwrap();
             self.cache
                 .insert((color, size, text), (texture, w as f32, h as f32, 0));
@@ -186,12 +181,14 @@ struct FontRendererThread<'a> {
     fonts: FxHashMap<u16, Font<'a, 'a>>,
     receiver: Receiver<FontRenderRequest>,
     result_queue: Arc<SegQueue<CacheUpdate>>,
+    image_system: Arc<ImageSystem>,
 }
 
 impl<'a> FontRendererThread<'a> {
     pub fn spawn(
         ttf: Cow<'static, [u8]>,
         result_queue: Arc<SegQueue<CacheUpdate>>,
+        image_system: Arc<ImageSystem>,
     ) -> Sender<FontRenderRequest> {
         let (sender, receiver) = crossbeam::channel::unbounded();
         if let Err(e) = std::thread::Builder::new()
@@ -204,6 +201,7 @@ impl<'a> FontRendererThread<'a> {
                     fonts: HashMap::default(),
                     receiver,
                     result_queue,
+                    image_system,
                 }
                 .run()
             })
@@ -234,8 +232,13 @@ impl<'a> FontRendererThread<'a> {
         let w = surface.width();
         let h = surface.height();
 
+        let (image, _) = self
+            .image_system
+            .create_image_and_enqueue_upload(data, w, h, true)
+            .unwrap();
+
         self.result_queue
-            .push(([r, g, b, a], size, text, data, w, h));
+            .push(([r, g, b, a], size, text, image, w, h));
     }
 
     #[instrument(level = "debug", skip(ctx, data))]

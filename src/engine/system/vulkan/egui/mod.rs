@@ -213,12 +213,8 @@ impl EguiPipeline {
     }
 
     #[inline]
-    pub fn prepare<P>(
-        &self,
-        egui: &EguiSystem,
-        high_priority_commands: &mut AutoCommandBufferBuilder<P>,
-    ) -> Result<(), UploadError> {
-        self.update_textures(&egui.texture_delta, high_priority_commands)
+    pub fn prepare(&self, egui: &EguiSystem) -> Result<(), UploadError> {
+        self.update_textures(&egui.texture_delta)
     }
 
     #[inline]
@@ -289,7 +285,6 @@ impl EguiPipeline {
                 if let Some(waiter) = &texture.waiter {
                     if waiter.is_complete() {
                         // no need to check again
-                        info!("EGUI AWAITED");
                         texture.waiter = None;
                     } else {
                         // can't use it for now
@@ -343,11 +338,7 @@ impl EguiPipeline {
     }
 
     /// To prevent flickering, some texture updates that must be executed before the next draw call.
-    fn update_textures<P>(
-        &self,
-        textures_delta: &TexturesDelta,
-        high_priority_commands: &mut AutoCommandBufferBuilder<P>,
-    ) -> Result<(), UploadError> {
+    fn update_textures(&self, textures_delta: &TexturesDelta) -> Result<(), UploadError> {
         let mut inner = self.inner.write().unwrap();
 
         inner
@@ -357,8 +348,7 @@ impl EguiPipeline {
         // this clone is cheap (just a few bytes, the image is inside an Arc)
         for (texture_id, delta) in textures_delta.set.iter().cloned() {
             // the egui default texture is high priority, everything else can wait a frame if needed
-            let high_priority_commands = Some(&mut *high_priority_commands)
-                .filter(|_| texture_id == egui::TextureId::default());
+            let high_priority = texture_id == egui::TextureId::default();
             let texture_id = IdWrapper::from(texture_id);
 
             if delta.is_whole() {
@@ -370,21 +360,21 @@ impl EguiPipeline {
                     TextureState {
                         id: texture,
                         image: Arc::clone(&image),
-                        waiter: Self::enqueue_image_upload_or_delta_update::<P>(
+                        waiter: Self::enqueue_image_upload_or_delta_update(
                             &self.image_system,
                             image,
                             delta,
-                            high_priority_commands,
+                            high_priority,
                         )?,
                     },
                 );
             } else {
                 if let Some(state) = inner.textures.get_mut(&texture_id) {
-                    state.waiter = Self::enqueue_image_upload_or_delta_update::<P>(
+                    state.waiter = Self::enqueue_image_upload_or_delta_update(
                         &self.image_system,
                         Arc::clone(&state.image),
                         delta,
-                        high_priority_commands,
+                        high_priority,
                     )?;
                 }
             }
@@ -423,11 +413,11 @@ impl EguiPipeline {
     }
 
     #[inline]
-    fn enqueue_image_upload_or_delta_update<P>(
+    fn enqueue_image_upload_or_delta_update(
         image_system: &ImageSystem,
         image: Arc<Image>,
         delta: ImageDelta,
-        high_priority_commands: Option<&mut AutoCommandBufferBuilder<P>>,
+        high_priority: bool,
     ) -> Result<Option<CopyRequestWaiter>, Validated<AllocateBufferError>> {
         let estimated_size = {
             let pixels = delta
@@ -466,15 +456,11 @@ impl EguiPipeline {
             )
         };
 
-        if let Some(high_priority_commands) = high_priority_commands {
-            high_priority_commands.copy_buffer_to_image(request(image_system)?)?;
-            Ok(None)
-        } else {
-            Ok(Some(image_system.enqueue_copy_request(
-                CopyInfo::Deferred(Box::new(request)),
-                estimated_size,
-            )))
-        }
+        Ok(Some(image_system.enqueue_copy_request(
+            CopyInfo::Deferred(Box::new(request)),
+            estimated_size,
+            high_priority,
+        )))
     }
 }
 

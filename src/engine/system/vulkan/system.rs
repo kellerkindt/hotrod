@@ -204,17 +204,19 @@ impl VulkanSystem {
                         queue.queue_family_index(),
                     );
 
+                    let mut stash = Option::<Vec<_>>::None;
+
                     loop {
                         const MAX_BYTES: usize = 1024 * 1024 * 32;
                         const MAX_REQUESTS: usize = 1024;
-                        const MAX_WAIT: Duration = Duration::from_secs(1);
+                        const MAX_WAIT: Duration = Duration::from_millis(10);
 
                         let started = Instant::now();
-                        let mut requests = Vec::with_capacity(MAX_REQUESTS);
                         let mut bytes = 0;
+                        let mut requests = stash.take().unwrap_or_else(|| Vec::with_capacity(MAX_REQUESTS));
 
 
-                        while requests.len() < MAX_REQUESTS
+                        'outer: while requests.len() < MAX_REQUESTS
                             && started.elapsed() < MAX_WAIT
                             && bytes < MAX_BYTES
                         {
@@ -222,8 +224,17 @@ impl VulkanSystem {
                                 image_system.wait_for_next_upload_info_until(started + MAX_WAIT)
                             {
                                 let estimated_bytes = upload_request.estimated_bytes;
+                                let required_before_render = upload_request.required_before_render;
                                 bytes += estimated_bytes;
-                                requests.push(upload_request);
+
+                                if required_before_render {
+                                    stash = Some(core::mem::take(&mut requests));
+                                    requests.push(upload_request);
+                                    break 'outer;
+                                } else {
+                                    requests.push(upload_request);
+                                }
+
                                 if requests.len() >= MAX_REQUESTS || (bytes + estimated_bytes) >= MAX_BYTES {
                                     break;
                                 }
@@ -452,6 +463,10 @@ impl VulkanSystem {
         }
 
         let callback_commands = render_callback(&context);
+
+        while let Some(waiter) = self.image_system.next_required_waiter() {
+            waiter.wait_for_completion();
+        }
 
         for command in callback_commands {
             if command.inheritance_info().render_pass.is_none() {

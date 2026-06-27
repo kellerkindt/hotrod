@@ -73,7 +73,7 @@ impl TextureLoader {
         height: u32,
     ) -> Result<(Arc<Image>, CopyRequestWaiter), Error> {
         Ok(image_system
-            .create_image_and_enqueue_upload(rgba, width, height)
+            .create_image_and_enqueue_upload(rgba, width, height, false)
             .map_err(Error::FailedToUpload)?)
     }
 }

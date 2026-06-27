@@ -12,8 +12,10 @@ use vulkano::Validated;
 pub struct ImageSystem {
     memo_allocator: Arc<dyn MemoryAllocator>,
     upload_queue: SegQueue<CopyRequest>,
+    upload_queue_bypass: SegQueue<CopyRequest>,
     upload_queue_condvar: Condvar,
     upload_queue_mutex: Mutex<()>,
+    upload_queue_required: SegQueue<CopyRequestWaiter>,
 }
 
 impl ImageSystem {
@@ -21,8 +23,10 @@ impl ImageSystem {
         Ok(Self {
             memo_allocator: Arc::new(memo_allocator),
             upload_queue: Default::default(),
+            upload_queue_bypass: Default::default(),
             upload_queue_condvar: Default::default(),
             upload_queue_mutex: Default::default(),
+            upload_queue_required: Default::default(),
         })
     }
 
@@ -47,22 +51,30 @@ impl ImageSystem {
         let mut now = Instant::now();
         let mut guard = self.upload_queue_mutex.lock().unwrap();
         while now < until {
-            match self.upload_queue.pop() {
-                Some(info) => return Some(info),
-                None => {
-                    let result = self
-                        .upload_queue_condvar
-                        .wait_timeout(guard, until.saturating_duration_since(now))
-                        .unwrap();
-                    guard = result.0;
-                    if result.1.timed_out() {
-                        break;
-                    }
+            if let Some(info) = self.upload_queue_bypass.pop() {
+                return Some(info);
+            } else if let Some(info) = self.upload_queue.pop() {
+                return Some(info);
+            } else {
+                let result = self
+                    .upload_queue_condvar
+                    .wait_timeout(guard, until.saturating_duration_since(now))
+                    .unwrap();
+                guard = result.0;
+                if result.1.timed_out() {
+                    break;
                 }
             }
+
             now = Instant::now();
         }
         None
+    }
+
+    /// Tries to retrieve the next [`CopyRequestWaiter`] that needs to finish before the next render
+    /// call.
+    pub(crate) fn next_required_waiter(&self) -> Option<CopyRequestWaiter> {
+        self.upload_queue_required.pop()
     }
 
     /// Creates a new [`Image`] and enqueues an upload-request the given `rgba`-data as content.
@@ -71,13 +83,14 @@ impl ImageSystem {
         rgba: I,
         width: u32,
         height: u32,
+        required_before_render: bool,
     ) -> Result<(Arc<Image>, CopyRequestWaiter), UploadError>
     where
         I: IntoIterator<Item = u8>,
         I::IntoIter: ExactSizeIterator,
     {
         let image = self.create_image(width, height)?;
-        let waiter = self.enqueue_image_upload(Arc::clone(&image), rgba)?;
+        let waiter = self.enqueue_image_upload(Arc::clone(&image), rgba, required_before_render)?;
         Ok((image, waiter))
     }
 
@@ -108,6 +121,7 @@ impl ImageSystem {
         &self,
         image: Arc<Image>,
         rgba: I,
+        required_before_render: bool,
     ) -> Result<CopyRequestWaiter, Validated<AllocateBufferError>>
     where
         I: IntoIterator<Item = u8>,
@@ -118,6 +132,7 @@ impl ImageSystem {
         Ok(self.enqueue_copy_request(
             CopyInfo::Immediate(self.create_copy_buffer_to_image_image(image, rgba)?),
             estimated_bytes,
+            required_before_render,
         ))
     }
 
@@ -153,6 +168,7 @@ impl ImageSystem {
         image: Arc<Image>,
         region: Option<([u32; 2], [u32; 2])>,
         rgba: I,
+        required_before_render: bool,
     ) -> Result<CopyRequestWaiter, Validated<AllocateBufferError>>
     where
         I: IntoIterator<Item = u8>,
@@ -161,7 +177,11 @@ impl ImageSystem {
         let rgba = rgba.into_iter();
         let estimated_bytes = rgba.len() * 4; // RGBA / Color32
         let info = self.create_copy_request(image, region, rgba)?;
-        Ok(self.enqueue_copy_request(CopyInfo::Immediate(info), estimated_bytes))
+        Ok(self.enqueue_copy_request(
+            CopyInfo::Immediate(info),
+            estimated_bytes,
+            required_before_render,
+        ))
     }
 
     pub fn create_copy_request<I>(
@@ -190,17 +210,28 @@ impl ImageSystem {
         &self,
         info: CopyInfo,
         estimated_bytes: usize,
+        required_before_render: bool,
     ) -> CopyRequestWaiter {
         let condvar = Arc::new((Condvar::new(), Mutex::new(false)));
-        self.upload_queue.push(CopyRequest {
+        let waiter = CopyRequestWaiter { condvar };
+        let request = CopyRequest {
             info,
             response: CopyRequestNotifier {
-                condvar: Arc::clone(&condvar),
+                condvar: Arc::clone(&waiter.condvar),
             },
             estimated_bytes,
-        });
+            required_before_render,
+        };
+
+        if required_before_render {
+            self.upload_queue_required.push(waiter.clone());
+            self.upload_queue_bypass.push(request);
+        } else {
+            self.upload_queue.push(request);
+        }
+
         self.upload_queue_condvar.notify_all();
-        CopyRequestWaiter { condvar }
+        waiter
     }
 }
 
@@ -223,6 +254,7 @@ pub(crate) struct CopyRequest {
     pub info: CopyInfo,
     pub response: CopyRequestNotifier,
     pub estimated_bytes: usize,
+    pub required_before_render: bool,
 }
 
 pub(crate) struct CopyRequestNotifier {
@@ -238,6 +270,7 @@ impl CopyRequestNotifier {
     }
 }
 
+#[derive(Clone)]
 pub struct CopyRequestWaiter {
     condvar: Arc<(Condvar, Mutex<bool>)>,
 }

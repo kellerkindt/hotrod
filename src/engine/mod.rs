@@ -97,7 +97,6 @@ impl Engine {
             vulkan_pipelines: Arc::new(VulkanPipelines::try_from(&vulkan_system)?),
             #[cfg(feature = "ui-egui")]
             egui_system: system::egui::EguiSystem::default(),
-            vulkan_system,
             sdl: SdlParts {
                 video_subsystem,
                 event_pump,
@@ -123,8 +122,10 @@ impl Engine {
             #[cfg(feature = "ttf-font-renderer")]
             font_renderer: crate::engine::system::ttf::FontRenderer::new(
                 builder.font_renderer_ttf.expect("Missing TrueType Font"),
+                Arc::clone(vulkan_system.image_system()),
             ),
             last_render_call: None,
+            vulkan_system,
         };
 
         this.set_fullscreen(builder.fullscreen);
@@ -314,21 +315,13 @@ impl<'a> BeforeRenderContext<'a> {
                 let mut commands = Vec::default();
 
                 #[cfg(feature = "ui-egui")]
-                match render_context.create_preparation_buffer_builder() {
-                    Ok(mut preparation_buffer) => {
-                        if let Err(e) = self
-                            .engine
-                            .vulkan_pipelines
-                            .egui
-                            .prepare(&self.engine.egui_system, &mut preparation_buffer)
-                        {
-                            error!("Failed to prepare rendering for egui: {e}");
-                        }
-                        commands.push(preparation_buffer.build().unwrap());
-                    }
-                    Err(e) => {
-                        error!("Failed to provide preparation buffer to egui: {e}");
-                    }
+                if let Err(e) = self
+                    .engine
+                    .vulkan_pipelines
+                    .egui
+                    .prepare(&self.engine.egui_system)
+                {
+                    error!("Failed to prepare rendering for egui: {e}");
                 }
 
                 commands.extend(f1(RenderContext {
