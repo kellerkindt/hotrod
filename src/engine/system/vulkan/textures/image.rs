@@ -263,7 +263,7 @@ pub(crate) struct CopyRequestNotifier {
 
 impl CopyRequestNotifier {
     pub fn notify_completion(self) {
-        info!("Notifying completion");
+        debug!("Notifying completion");
         let mut guard = self.condvar.1.lock().unwrap();
         *guard = true;
         self.condvar.0.notify_all();
@@ -286,6 +286,6 @@ impl CopyRequestWaiter {
         while !*guard {
             guard = self.condvar.0.wait(guard).unwrap();
         }
-        info!("Completion awaited")
+        debug!("Completion awaited")
     }
 }

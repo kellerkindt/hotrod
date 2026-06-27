@@ -206,35 +206,38 @@ impl VulkanSystem {
 
                     const MAX_BYTES: usize = 1024 * 1024 * 32;
                     const MAX_REQUESTS: usize = 1024;
-                    const MAX_WAIT: Duration = Duration::from_secs(10);
+                    const MAX_WAIT_IDLE: Duration = Duration::from_secs(1);
+                    const MAX_WAIT_BUSY: Duration = Duration::from_millis(1);
 
                     let mut requests = Vec::with_capacity(MAX_REQUESTS);
                     let mut waiters = Vec::with_capacity(MAX_REQUESTS);
 
-                    loop {
+                    let mut stash = None;
 
-                        let started = Instant::now();
-                        let mut bytes = 0;
+                    loop {
+                        let (started, mut bytes) = stash.unwrap_or_else(|| (Instant::now(), 0));
                         let mut skip = 0;
 
 
                         'outer: while requests.len() < MAX_REQUESTS
-                            && started.elapsed() < MAX_WAIT
+                            && started.elapsed() < if requests.is_empty() {  MAX_WAIT_IDLE } else { MAX_WAIT_BUSY }
                             && bytes < MAX_BYTES
                         {
                             while let Some(upload_request) =
-                                image_system.wait_for_next_upload_info_until(started + MAX_WAIT)
+                                image_system.wait_for_next_upload_info_until(started + if requests.is_empty() {  MAX_WAIT_IDLE } else { MAX_WAIT_BUSY })
                             {
                                 let estimated_bytes = upload_request.estimated_bytes;
                                 let required_before_render = upload_request.required_before_render;
-                                bytes += estimated_bytes;
 
                                 if required_before_render {
                                     skip = requests.len();
+                                    stash = Some((started, core::mem::take(&mut bytes)));
                                     requests.push(upload_request);
+                                    bytes += estimated_bytes;
                                     break 'outer;
                                 } else {
                                     requests.push(upload_request);
+                                    bytes += estimated_bytes;
                                 }
 
                                 if requests.len() >= MAX_REQUESTS || (bytes + estimated_bytes) >= MAX_BYTES {
@@ -246,7 +249,7 @@ impl VulkanSystem {
                         if requests.is_empty() {
                             continue;
                         } else {
-                            info!("Handling {} requests...", requests.len());
+                            info!("Handling {} transfer requests...", requests.len());
                         }
 
                         let mut buffer = AutoCommandBufferBuilder::primary(
