@@ -234,7 +234,6 @@ impl VulkanSystem {
                                     skip = requests.len();
                                     stash = Some((started, core::mem::take(&mut bytes)));
                                     requests.push(upload_request);
-                                    bytes += estimated_bytes;
                                     break 'outer;
                                 } else {
                                     requests.push(upload_request);
