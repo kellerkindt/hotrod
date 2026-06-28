@@ -50,7 +50,7 @@ impl ImageSystem {
     pub(crate) fn wait_for_next_upload_info_until(&self, until: Instant) -> Option<CopyRequest> {
         let mut now = Instant::now();
         let mut guard = self.upload_queue_mutex.lock().unwrap();
-        while now < until {
+        loop {
             if let Some(info) = self.upload_queue_bypass.pop() {
                 return Some(info);
             } else if let Some(info) = self.upload_queue.pop() {
@@ -67,6 +67,9 @@ impl ImageSystem {
             }
 
             now = Instant::now();
+            if now > until {
+                break;
+            }
         }
         None
     }
@@ -216,7 +219,7 @@ impl ImageSystem {
         let waiter = CopyRequestWaiter { condvar };
         let request = CopyRequest {
             info,
-            response: CopyRequestNotifier {
+            notifier: CopyRequestNotifier {
                 condvar: Arc::clone(&waiter.condvar),
             },
             estimated_bytes,
@@ -252,7 +255,7 @@ pub enum CopyInfo {
 
 pub(crate) struct CopyRequest {
     pub info: CopyInfo,
-    pub response: CopyRequestNotifier,
+    pub notifier: CopyRequestNotifier,
     pub estimated_bytes: usize,
     pub required_before_render: bool,
 }
@@ -262,8 +265,25 @@ pub(crate) struct CopyRequestNotifier {
 }
 
 impl CopyRequestNotifier {
+    #[inline]
+    pub fn id(&self) -> usize {
+        Arc::as_ptr(&self.condvar) as usize
+    }
+
     pub fn notify_completion(self) {
-        debug!("Notifying completion");
+        info!(
+            "Notifying completion {:0x?}",
+            Arc::as_ptr(&self.condvar) as usize
+        );
+        let mut guard = self.condvar.1.lock().unwrap();
+        *guard = true;
+        self.condvar.0.notify_all();
+    }
+}
+
+impl Drop for CopyRequestNotifier {
+    fn drop(&mut self) {
+        info!("On Drop: Notifying completion {:0x?}", self.id());
         let mut guard = self.condvar.1.lock().unwrap();
         *guard = true;
         self.condvar.0.notify_all();
@@ -277,15 +297,29 @@ pub struct CopyRequestWaiter {
 
 impl CopyRequestWaiter {
     #[inline]
+    pub fn id(&self) -> usize {
+        Arc::as_ptr(&self.condvar) as usize
+    }
+
+    #[inline]
     pub fn is_complete(&self) -> bool {
         *self.condvar.1.lock().unwrap()
     }
 
     pub fn wait_for_completion(self) {
+        info!("Awaiting {:0x?}", self.id());
         let mut guard = self.condvar.1.lock().unwrap();
-        while !*guard {
-            guard = self.condvar.0.wait(guard).unwrap();
+        loop {
+            if *guard {
+                break;
+            }
+            guard = self
+                .condvar
+                .0
+                .wait_timeout(guard, Duration::from_millis(1))
+                .unwrap()
+                .0;
         }
-        debug!("Completion awaited")
+        info!("Completion awaited {:0x?}", self.id());
     }
 }

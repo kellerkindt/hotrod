@@ -360,22 +360,22 @@ impl EguiPipeline {
                     TextureState {
                         id: texture,
                         image: Arc::clone(&image),
-                        waiter: Self::enqueue_image_upload_or_delta_update(
+                        waiter: Some(Self::enqueue_image_upload_or_delta_update(
                             &self.image_system,
                             image,
                             delta,
                             high_priority,
-                        )?,
+                        )?),
                     },
                 );
             } else {
                 if let Some(state) = inner.textures.get_mut(&texture_id) {
-                    state.waiter = Self::enqueue_image_upload_or_delta_update(
+                    state.waiter = Some(Self::enqueue_image_upload_or_delta_update(
                         &self.image_system,
                         Arc::clone(&state.image),
                         delta,
                         high_priority,
-                    )?;
+                    )?);
                 }
             }
         }
@@ -418,15 +418,15 @@ impl EguiPipeline {
         image: Arc<Image>,
         delta: ImageDelta,
         high_priority: bool,
-    ) -> Result<Option<CopyRequestWaiter>, Validated<AllocateBufferError>> {
+    ) -> Result<CopyRequestWaiter, Validated<AllocateBufferError>> {
         let estimated_size = {
             let pixels = delta
                 .pos
                 .map(|[x, y]| {
-                    let widht = delta.image.width().saturating_sub(x);
+                    let width = delta.image.width().saturating_sub(x);
                     let height = delta.image.height().saturating_sub(y);
 
-                    widht * height
+                    width * height
                 })
                 .unwrap_or_else(|| match &delta.image {
                     ImageData::Color(color_data) => {
@@ -456,11 +456,11 @@ impl EguiPipeline {
             )
         };
 
-        Ok(Some(image_system.enqueue_copy_request(
+        Ok(image_system.enqueue_copy_request(
             CopyInfo::Deferred(Box::new(request)),
             estimated_size,
             high_priority,
-        )))
+        ))
     }
 }
 

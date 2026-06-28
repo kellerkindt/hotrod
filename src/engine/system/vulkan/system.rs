@@ -197,7 +197,7 @@ impl VulkanSystem {
             let image_system = Arc::clone(&self.image_system);
 
             let _ = std::thread::Builder::new()
-                .name(format!("transfer_queue_{index}"))
+                .name(format!("hotrod_tq_{}", index))
                 .spawn(move || {
                     info!(
                         "Started transfer_queue[{index}] thread on family_index={} (render_queue.family_index={render_queue_family_index})",
@@ -207,10 +207,10 @@ impl VulkanSystem {
                     const MAX_BYTES: usize = 1024 * 1024 * 32;
                     const MAX_REQUESTS: usize = 1024;
                     const MAX_WAIT_IDLE: Duration = Duration::from_secs(1);
-                    const MAX_WAIT_BUSY: Duration = Duration::from_millis(1);
+                    const MAX_WAIT_BUSY: Duration = Duration::from_micros(1);
 
                     let mut requests = Vec::with_capacity(MAX_REQUESTS);
-                    let mut waiters = Vec::with_capacity(MAX_REQUESTS);
+                    let mut notifiers = Vec::with_capacity(MAX_REQUESTS);
 
                     let mut stash = None;
 
@@ -220,9 +220,7 @@ impl VulkanSystem {
                         let mut skip = 0;
 
 
-                        'outer: while requests.len() < MAX_REQUESTS
-                            && started.elapsed() < max_wait
-                            && bytes < MAX_BYTES
+                        'outer: loop
                         {
                             while let Some(upload_request) =
                                 image_system.wait_for_next_upload_info_until(started + max_wait)
@@ -244,6 +242,12 @@ impl VulkanSystem {
                                     break;
                                 }
                             }
+
+                            if requests.len() >= MAX_REQUESTS
+                                || started.elapsed() >= max_wait
+                                || bytes >= MAX_BYTES {
+                                break;
+                            }
                         }
 
                         if requests.is_empty() {
@@ -260,6 +264,7 @@ impl VulkanSystem {
                             .unwrap();
 
                         for request in requests.drain(skip..) {
+                            info!("Handling transfer request: {:0x?}", request.notifier.id());
                             let copy_info = match request.info {
                                 CopyInfo::Deferred(eval) => {
                                     match eval(&image_system) {
@@ -275,17 +280,17 @@ impl VulkanSystem {
                             if let Err(e) = buffer.copy_buffer_to_image(copy_info) {
                                 error!("Failed to enqueue copy_buffer_to_image-cmd: {e}");
                             } else {
-                                waiters.push(request.response);
+                                notifiers.push(request.notifier);
                             }
                         }
 
                         // No successful copy request?
-                        if waiters.is_empty() {
+                        if notifiers.is_empty() {
                             continue;
                         }
 
 
-                        debug!("Submitting upload requests");
+                        info!("Submitting {} upload requests", notifiers.len());
                         let commands = buffer.build().unwrap();
                         let future = vulkano::sync::now(Arc::clone(&device))
                             .then_execute(Arc::clone(&queue), commands)
@@ -293,15 +298,15 @@ impl VulkanSystem {
                             .then_signal_fence_and_flush()
                             .unwrap();
 
-                        debug!("Awaiting upload completion");
+                        info!("Awaiting upload completion");
                         future.wait(None).unwrap();
 
-                        debug!("Notifying upload waiters...");
-                        for waiter in waiters.drain(..) {
-                            waiter.notify_completion();
+                        info!("Notifying upload waiters...");
+                        for notifier in notifiers.drain(..) {
+                            notifier.notify_completion();
                         }
 
-                        debug!("Notifying upload waiters... DONE");
+                        info!("Notifying upload waiters... DONE");
                     }
                 });
         }
